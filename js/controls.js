@@ -1,11 +1,10 @@
 /**
  * WebXR Controller & Throw Interaction Manager
  * Optimized for Meta Quest 3:
- * - Smooth gaze-aligned locomotion (follows exact camera world direction)
- * - Continuous smooth turning on right thumbstick (no snap jumps)
- * - In-hand baton visual parenting (always 100% visible in hand when grabbed)
- * - Analog grip/trigger release threshold for effortless throwing
- * - Trajectory guide for Easy mode & desktop mouse fallback
+ * - Left joystick: gaze-aligned locomotion with correct forward/right axes
+ * - Right joystick: continuous smooth rotation
+ * - In-hand visual baton: 100% visible, analog grip/trigger release
+ * - NaN safety checks to prevent WebGL black screen crashes
  */
 
 class VRControllerManager {
@@ -93,40 +92,32 @@ class VRControllerManager {
           gamepad.hapticActuators[0].pulse(intensity, duration);
         }
       }
-    } catch (e) {
-      // Ignore unsupported haptic environments
-    }
+    } catch (e) {}
   }
 
-  /**
-   * Check proximity and grab the baton
-   */
   checkAndGrab(hand, buttonType = 'trigger') {
     if (!window.molkkyGame || window.molkkyGame.state !== 'READY') return;
     if (this.heldByHand) return;
 
     const handEl = hand === 'left' ? this.leftHandEl : this.rightHandEl;
     const baton = this.getBaton();
-    if (!handEl || !baton) return;
+    if (!handEl) return;
 
     const handPos = new THREE.Vector3();
-    const batonPos = new THREE.Vector3();
     handEl.object3D.getWorldPosition(handPos);
-    baton.object3D.getWorldPosition(batonPos);
+
+    const batonPos = new THREE.Vector3();
+    if (baton) baton.object3D.getWorldPosition(batonPos);
 
     const distToBaton = handPos.distanceTo(batonPos);
     const standPos = new THREE.Vector3(0.35, 0.95, -0.25);
     const distToStand = handPos.distanceTo(standPos);
 
-    // Generous grab radius in VR: within 2.2m of baton OR 2.5m of throwing stand
     if (distToBaton < 2.2 || distToStand < 2.5) {
       this.grabWithHand(hand, buttonType);
     }
   }
 
-  /**
-   * Directly grab baton with specified hand
-   */
   grabWithHand(hand, buttonType = 'trigger') {
     if (!window.molkkyGame || window.molkkyGame.state !== 'READY') return;
     if (this.heldByHand) return;
@@ -150,7 +141,7 @@ class VRControllerManager {
       baton.setAttribute('visible', 'false');
     }
 
-    // 2. Show in-hand visual baton attached to controller
+    // 2. Show in-hand visual baton
     const handBatonId = hand === 'left' ? 'left-hand-baton' : 'right-hand-baton';
     const handBaton = document.getElementById(handBatonId);
     if (handBaton) {
@@ -165,9 +156,6 @@ class VRControllerManager {
     }
   }
 
-  /**
-   * Release and launch the baton into physical flight
-   */
   onRelease(hand) {
     if (this.heldByHand !== hand) return;
     this.heldByHand = null;
@@ -177,7 +165,6 @@ class VRControllerManager {
       return;
     }
 
-    // Hide trajectory assistance
     this.hideTrajectory();
 
     // Hide in-hand visual baton
@@ -193,10 +180,9 @@ class VRControllerManager {
       baton.setAttribute('visible', 'true');
     }
 
-    // Compute release velocity from tracked arm movement
+    // Compute release velocity with NaN protection
     const throwVel = this.calculateReleaseVelocity();
 
-    // Natural tumbling angular velocity
     const angVel = new THREE.Vector3(
       (Math.random() - 0.5) * 2,
       -throwVel.length() * 1.5,
@@ -207,17 +193,22 @@ class VRControllerManager {
     const releasePos = new THREE.Vector3();
     if (handEl) {
       handEl.object3D.getWorldPosition(releasePos);
-      // Project slightly forward from hand along throw direction
-      const forward = throwVel.clone().normalize().multiplyScalar(0.12);
-      releasePos.add(forward);
+      if (isFinite(throwVel.length()) && throwVel.length() > 0.1) {
+        const forward = throwVel.clone().normalize().multiplyScalar(0.12);
+        releasePos.add(forward);
+      }
     } else {
       releasePos.set(0, 1.1, -0.3);
     }
 
-    // Hand haptic pulse on throw
+    // Sanitize releasePos
+    if (!isFinite(releasePos.x) || !isFinite(releasePos.y) || !isFinite(releasePos.z)) {
+      releasePos.set(0, 1.1, -0.3);
+    }
+
     this.triggerHaptic(hand, 0.9, 130);
 
-    // Launch Cannon physics simulation
+    // Launch Cannon physics
     if (window.molkkyPhysics) {
       window.molkkyPhysics.launchBaton(releasePos, throwVel, angVel);
     }
@@ -235,27 +226,30 @@ class VRControllerManager {
       return new THREE.Vector3(0, 1.4, -4.8);
     }
 
-    // Weighted average of recent velocities (favoring latest frames)
     const avgVel = new THREE.Vector3();
     let totalWeight = 0;
 
     for (let i = 0; i < this.velocityHistory.length; i++) {
-      const weight = (i + 1);
-      avgVel.addScaledVector(this.velocityHistory[i], weight);
-      totalWeight += weight;
+      const v = this.velocityHistory[i];
+      if (v && isFinite(v.x) && isFinite(v.y) && isFinite(v.z)) {
+        const weight = (i + 1);
+        avgVel.addScaledVector(v, weight);
+        totalWeight += weight;
+      }
     }
 
     if (totalWeight > 0) {
       avgVel.divideScalar(totalWeight);
+    } else {
+      return new THREE.Vector3(0, 1.4, -4.8);
     }
 
-    // Apply natural VR throw multiplier
-    const throwMultiplier = 1.45;
-    avgVel.multiplyScalar(throwMultiplier);
+    // Throw multiplier
+    avgVel.multiplyScalar(1.45);
 
-    // If speed is very gentle, provide a comfortable forward toss towards pins
+    // Minimum forward toss fallback if released gently
     const speed = avgVel.length();
-    if (speed < 1.8) {
+    if (!isFinite(speed) || speed < 1.8) {
       const targetZ = window.molkkyGame ? window.molkkyGame.difficultyConfigs[window.molkkyGame.difficulty].distance : -3.5;
       const dist = Math.abs(targetZ);
       avgVel.set(0, 1.5, -dist * 1.35);
@@ -269,59 +263,55 @@ class VRControllerManager {
     return avgVel;
   }
 
-  /**
-   * Main per-frame update loop called from A-Frame tick
-   */
   update(time, deltaTime) {
-    // 1. Direct WebXR Gamepad handling for Meta Quest 3 (locomotion, smooth turn, grabbing)
-    this.updateWebXRGamepads(deltaTime);
+    try {
+      this.updateWebXRGamepads(deltaTime);
 
-    // 2. Track held baton
-    if (!this.heldByHand) {
-      this.hideTrajectory();
-      return;
-    }
+      if (!this.heldByHand) {
+        this.hideTrajectory();
+        return;
+      }
 
-    const handEl = this.heldByHand === 'left' ? this.leftHandEl : this.rightHandEl;
-    if (!handEl) return;
+      const handEl = this.heldByHand === 'left' ? this.leftHandEl : this.rightHandEl;
+      if (!handEl) return;
 
-    const currentPos = new THREE.Vector3();
-    const currentQuat = new THREE.Quaternion();
-    handEl.object3D.getWorldPosition(currentPos);
-    handEl.object3D.getWorldQuaternion(currentQuat);
+      const currentPos = new THREE.Vector3();
+      const currentQuat = new THREE.Quaternion();
+      handEl.object3D.getWorldPosition(currentPos);
+      handEl.object3D.getWorldQuaternion(currentQuat);
 
-    // Track hand velocity for release momentum
-    const now = performance.now();
-    const dt = Math.max((now - this.lastTimestamp) / 1000, 0.001);
+      if (!isFinite(currentPos.x)) return;
 
-    const instantVel = new THREE.Vector3()
-      .subVectors(currentPos, this.lastHandPos)
-      .divideScalar(dt);
+      const now = performance.now();
+      const dt = Math.max((now - this.lastTimestamp) / 1000, 0.001);
 
-    this.velocityHistory.push(instantVel);
-    if (this.velocityHistory.length > this.maxHistory) {
-      this.velocityHistory.shift();
-    }
+      const instantVel = new THREE.Vector3()
+        .subVectors(currentPos, this.lastHandPos)
+        .divideScalar(dt);
 
-    this.lastHandPos.copy(currentPos);
-    this.lastHandQuat.copy(currentQuat);
-    this.lastTimestamp = now;
+      if (isFinite(instantVel.x) && isFinite(instantVel.y) && isFinite(instantVel.z)) {
+        this.velocityHistory.push(instantVel);
+        if (this.velocityHistory.length > this.maxHistory) {
+          this.velocityHistory.shift();
+        }
+      }
 
-    // Visual trajectory assistance in Easy mode
-    if (window.molkkyGame && window.molkkyGame.difficulty === 'facile') {
-      const predictedVel = this.calculateReleaseVelocity();
-      this.renderTrajectoryArc(currentPos, predictedVel);
-    } else {
-      this.hideTrajectory();
+      this.lastHandPos.copy(currentPos);
+      this.lastHandQuat.copy(currentQuat);
+      this.lastTimestamp = now;
+
+      // Easy mode trajectory guide
+      if (window.molkkyGame && window.molkkyGame.difficulty === 'facile') {
+        const predictedVel = this.calculateReleaseVelocity();
+        this.renderTrajectoryArc(currentPos, predictedVel);
+      } else {
+        this.hideTrajectory();
+      }
+    } catch (e) {
+      console.warn('VR update error:', e);
     }
   }
 
-  /**
-   * Direct WebXR Gamepad Polling:
-   * 1. Smooth gaze-aligned locomotion on left thumbstick
-   * 2. Continuous smooth turning on right thumbstick
-   * 3. Robust grab & analog release
-   */
   updateWebXRGamepads(deltaTime) {
     const scene = document.querySelector('a-scene');
     if (!scene || !scene.xrSession) return;
@@ -334,33 +324,29 @@ class VRControllerManager {
     for (const source of session.inputSources) {
       if (!source.gamepad) continue;
       const gp = source.gamepad;
-      const hand = source.handedness; // 'left' or 'right'
+      const hand = source.handedness;
 
-      // Meta Quest axes: axes[2] is X, axes[3] is Y (or fallback to axes[0], axes[1])
       const axisX = gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0);
       const axisY = gp.axes.length >= 4 ? gp.axes[3] : (gp.axes[1] || 0);
 
-      // Buttons with analog values
       const triggerVal = gp.buttons[0] ? (gp.buttons[0].value || (gp.buttons[0].pressed ? 1 : 0)) : 0;
       const gripVal = gp.buttons[1] ? (gp.buttons[1].value || (gp.buttons[1].pressed ? 1 : 0)) : 0;
       const buttonA_X = gp.buttons[4] && gp.buttons[4].pressed;
 
       // 1. LEFT THUMBSTICK: Smooth Locomotion following exact Camera Direction
+      // Inverted signs so forward pushes forward, right pushes right
       if (hand === 'left') {
         const deadzone = 0.12;
         if (Math.abs(axisX) > deadzone || Math.abs(axisY) > deadzone) {
-          // Get true camera world direction (where player's head is facing in 3D world)
           const forward = new THREE.Vector3();
           camera.object3D.getWorldDirection(forward);
           forward.y = 0;
           forward.normalize();
 
-          // Right vector: perpendicular to forward on horizontal ground
           const right = new THREE.Vector3();
           right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
-          // axisY < 0 when pushing joystick forward -> move in direction of forward
-          // axisX > 0 when pushing joystick right -> move in direction of right
+          // Corrected signs: axisY < 0 moves forward, axisX > 0 moves right
           const moveDir = new THREE.Vector3();
           moveDir.addScaledVector(forward, -axisY);
           moveDir.addScaledVector(right, axisX);
@@ -369,37 +355,30 @@ class VRControllerManager {
           const moveSpeed = 2.4 * (deltaTime / 1000);
           rig.object3D.position.addScaledVector(moveDir, moveSpeed);
 
-          // Park boundaries
           rig.object3D.position.x = Math.max(Math.min(rig.object3D.position.x, 8), -8);
           rig.object3D.position.z = Math.max(Math.min(rig.object3D.position.z, 2), -6);
         }
       }
 
-      // 2. RIGHT THUMBSTICK: Continuous Smooth Turning (No snap jumps!)
+      // 2. RIGHT THUMBSTICK: Continuous Smooth Turning
       if (hand === 'right') {
         const deadzone = 0.12;
         if (Math.abs(axisX) > deadzone) {
-          // Continuous smooth turn: 2.3 radians/sec (approx 130°/sec) scaled by deflection
           const turnRate = 2.3 * (deltaTime / 1000);
-          // Pushing right (axisX > 0) turns right
           rig.object3D.rotation.y -= axisX * turnRate;
         }
       }
 
       // 3. GRAB & RELEASE VIA GAMEPAD
       if (!this.heldByHand) {
-        // Player wants to grab if squeezing trigger, grip, or pressing Button A / X
         if (triggerVal > 0.45 || gripVal > 0.45 || buttonA_X) {
           const btn = triggerVal > 0.45 ? 'trigger' : 'grip';
           this.checkAndGrab(hand, btn);
         }
       } else if (this.heldByHand === hand) {
-        // When holding: check if the release condition is met
         const triggerReleased = triggerVal < 0.25;
         const gripReleased = gripVal < 0.25;
 
-        // If grabbed with trigger and trigger is released, OR grabbed with grip and grip released,
-        // OR both are released -> LAUNCH THROW!
         if (this.grabbedWithButton === 'trigger' && triggerReleased) {
           this.onRelease(hand);
         } else if (this.grabbedWithButton === 'grip' && gripReleased) {
@@ -414,6 +393,8 @@ class VRControllerManager {
   renderTrajectoryArc(startPos, velocity) {
     const scene = document.querySelector('a-scene');
     if (!scene || !scene.object3D) return;
+
+    if (!isFinite(velocity.x) || !isFinite(startPos.x)) return;
 
     if (!this.trajectoryLine) {
       const geom = new THREE.BufferGeometry();
@@ -464,9 +445,6 @@ class VRControllerManager {
     }
   }
 
-  /**
-   * Desktop mouse drag fallback for testing without VR headset
-   */
   setupDesktopFallback() {
     let isAiming = false;
     let startY = 0;
@@ -523,9 +501,6 @@ class VRControllerManager {
     });
   }
 
-  /**
-   * Simulated throw button (used on desktop companion HUD)
-   */
   executeSimulatedThrow(powerModifier = 1.0, horizontalAim = 0.0) {
     if (!window.molkkyGame || window.molkkyGame.state !== 'READY') return;
 

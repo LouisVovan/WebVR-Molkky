@@ -150,92 +150,103 @@ class MolkkyGame {
    * Called automatically by physics engine once all bodies have settled
    */
   onThrowSettled(fallenPins) {
-    if (this.state === 'GAME_OVER') return;
+    try {
+      if (this.state === 'GAME_OVER') return;
 
-    this.state = 'SETTLING';
-    this.lastFallenPins = fallenPins.map(p => p.number);
-    let pointsAwarded = 0;
-    let feedbackMsg = '';
-    let feedbackType = 'info';
+      this.state = 'SETTLING';
+      const safePins = Array.isArray(fallenPins) ? fallenPins : [];
+      this.lastFallenPins = safePins.map(p => p.number);
+      let pointsAwarded = 0;
+      let feedbackMsg = '';
+      let feedbackType = 'info';
 
-    // Official Mölkky Scoring Rules
-    if (fallenPins.length === 0) {
-      // Échec (Miss)
-      pointsAwarded = 0;
-      this.consecutiveMisses++;
-      feedbackMsg = `0 quille tombée ! Échec ${this.consecutiveMisses}/3`;
-      feedbackType = 'warning';
+      // Official Mölkky Scoring Rules
+      if (safePins.length === 0) {
+        // Échec (Miss)
+        pointsAwarded = 0;
+        this.consecutiveMisses++;
+        feedbackMsg = `0 quille tombée ! Échec ${this.consecutiveMisses}/3`;
+        feedbackType = 'warning';
 
-      if (window.soundEngine) window.soundEngine.playMiss();
-    } else if (fallenPins.length === 1) {
-      // 1 seule quille : valeur du numéro
-      const pinNum = fallenPins[0].number;
-      pointsAwarded = pinNum;
-      this.consecutiveMisses = 0;
-      feedbackMsg = `Quille ${pinNum} tombée ! +${pinNum} points`;
-      feedbackType = 'success';
+        if (window.soundEngine) window.soundEngine.playMiss();
+      } else if (safePins.length === 1) {
+        // 1 seule quille : valeur du numéro
+        const pinNum = safePins[0].number;
+        pointsAwarded = pinNum;
+        this.consecutiveMisses = 0;
+        feedbackMsg = `Quille ${pinNum} tombée ! +${pinNum} points`;
+        feedbackType = 'success';
 
-      if (window.soundEngine) window.soundEngine.playWoodImpact({ x: 0, y: 1, z: -2 }, 1.5);
-    } else {
-      // Plusieurs quilles : nombre de quilles tombées
-      const count = fallenPins.length;
-      pointsAwarded = count;
-      this.consecutiveMisses = 0;
-      const pinList = fallenPins.map(p => p.number).sort((a, b) => a - b).join(', ');
-      feedbackMsg = `${count} quilles tombées (${pinList}) ! +${count} points`;
-      feedbackType = 'success';
+        if (window.soundEngine) window.soundEngine.playWoodImpact({ x: 0, y: 1, z: -2 }, 1.5);
+      } else {
+        // Plusieurs quilles : nombre de quilles tombées
+        const count = safePins.length;
+        pointsAwarded = count;
+        this.consecutiveMisses = 0;
+        const pinList = safePins.map(p => p.number).sort((a, b) => a - b).join(', ');
+        feedbackMsg = `${count} quilles tombées (${pinList}) ! +${count} points`;
+        feedbackType = 'success';
 
-      if (window.soundEngine) window.soundEngine.playWoodImpact({ x: 0, y: 1, z: -2 }, 2.0);
-    }
+        if (window.soundEngine) window.soundEngine.playWoodImpact({ x: 0, y: 1, z: -2 }, 2.0);
+      }
 
-    this.lastPoints = pointsAwarded;
-    const previousScore = this.score;
-    const prospectiveScore = previousScore + pointsAwarded;
+      this.lastPoints = pointsAwarded;
+      const previousScore = this.score;
+      const prospectiveScore = previousScore + pointsAwarded;
 
-    // Check game condition:
-    // 1. Defeat: 3 consecutive misses
-    if (this.consecutiveMisses >= 3) {
-      this.handleGameOver(false, 'Défaite : 3 lancers consécutifs sans marquer.');
+      // Check game condition:
+      // 1. Defeat: 3 consecutive misses
+      if (this.consecutiveMisses >= 3) {
+        this.handleGameOver(false, 'Défaite : 3 lancers consécutifs sans marquer.');
+        this.recordThrow(pointsAwarded, this.score);
+        return;
+      }
+
+      // 2. Victory: exactly 50 points
+      if (prospectiveScore === this.targetScore) {
+        this.score = 50;
+        this.handleGameOver(true, `Victoire ! 50 points atteints en ${this.throwCount} lancers !`);
+        this.recordThrow(pointsAwarded, this.score);
+        return;
+      }
+
+      // 3. Penalty: overshot 50 -> reset to 25
+      if (prospectiveScore > this.targetScore) {
+        this.score = 25;
+        feedbackMsg = `DÉPASSEMENT (${prospectiveScore} pts) ! Score ramené à 25 points.`;
+        feedbackType = 'penalty';
+
+        if (window.soundEngine) window.soundEngine.playPenalty();
+      } else {
+        this.score = prospectiveScore;
+      }
+
+      // Record throw history
       this.recordThrow(pointsAwarded, this.score);
-      return;
-    }
+      this.showFeedback(feedbackMsg, feedbackType);
 
-    // 2. Victory: exactly 50 points
-    if (prospectiveScore === this.targetScore) {
-      this.score = 50;
-      this.handleGameOver(true, `Victoire ! 50 points atteints en ${this.throwCount} lancers !`);
-      this.recordThrow(pointsAwarded, this.score);
-      return;
-    }
+      // Stand fallen pins upright on spot & return baton
+      setTimeout(() => {
+        try {
+          if (window.molkkyPhysics) {
+            window.molkkyPhysics.standFallenPinsUpright();
+            window.molkkyPhysics.resetBatonToStand();
+          }
+          this.state = 'READY';
+          this.updateUI();
+        } catch (e) {
+          console.warn('Reset round error:', e);
+        }
+      }, 1500);
 
-    // 3. Penalty: overshot 50 -> reset to 25
-    if (prospectiveScore > this.targetScore) {
-      this.score = 25;
-      feedbackMsg = `DÉPASSEMENT (${prospectiveScore} pts) ! Score ramené à 25 points.`;
-      feedbackType = 'penalty';
-
-      if (window.soundEngine) window.soundEngine.playPenalty();
-    } else {
-      this.score = prospectiveScore;
-    }
-
-    // Record throw history
-    this.recordThrow(pointsAwarded, this.score);
-    this.showFeedback(feedbackMsg, feedbackType);
-
-    // Official Rule:
-    // "Après le calcul du score, chaque quille tombée est remise debout à l'endroit où elle est tombée.
-    // Les quilles se dispersent donc progressivement au cours de la partie."
-    setTimeout(() => {
+      this.updateUI();
+    } catch (err) {
+      console.warn('onThrowSettled error caught:', err);
+      this.state = 'READY';
       if (window.molkkyPhysics) {
-        window.molkkyPhysics.standFallenPinsUpright();
         window.molkkyPhysics.resetBatonToStand();
       }
-      this.state = 'READY';
-      this.updateUI();
-    }, 1500);
-
-    this.updateUI();
+    }
   }
 
   recordThrow(points, totalScore) {
