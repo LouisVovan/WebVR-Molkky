@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebVR Mölkky - Jeu Immersif WebXR</title>
-  <meta name="description" content="Jeu de Mölkky en réalité virtuelle WebVR / WebXR développé avec A-Frame et Cannon.js pour ST2AWD.">
+  <meta name="description"
+    content="Jeu de Mölkky en réalité virtuelle WebVR / WebXR développé avec A-Frame et Cannon.js pour ST2AWD.">
 
   <!-- A-Frame VR Framework -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -83,7 +85,7 @@
         const treeCoords = [
           { x: -7, z: -8 }, { x: 7, z: -9 },
           { x: -8, z: -2 }, { x: 8, z: -3 },
-          { x: -6, z: 4 },  { x: 6, z: 4 },
+          { x: -6, z: 4 }, { x: 6, z: 4 },
           { x: -4, z: -12 }, { x: 4, z: -12 }, { x: 0, z: -14 }
         ];
 
@@ -162,6 +164,17 @@
         tray.setAttribute('depth', '0.28');
         tray.setAttribute('color', '#4a3016');
         sceneEl.appendChild(tray);
+
+        // Visual indicator ring on stand
+        const standRing = document.createElement('a-ring');
+        standRing.setAttribute('position', '0.35 0.93 -0.25');
+        standRing.setAttribute('rotation', '-90 0 0');
+        standRing.setAttribute('radius-inner', '0.07');
+        standRing.setAttribute('radius-outer', '0.11');
+        standRing.setAttribute('color', '#fbbf24');
+        standRing.setAttribute('opacity', '0.65');
+        standRing.setAttribute('material', 'shader: flat');
+        sceneEl.appendChild(standRing);
       },
 
       buildPinsAndBaton: function () {
@@ -203,7 +216,7 @@
           this.pinMeshesByNum[num] = group;
         }
 
-        // 2. Create the Mölkky throwing baton
+        // 2. Create the Mölkky throwing baton (in-world rigid body)
         const batonEntity = document.createElement('a-entity');
         batonEntity.setAttribute('id', 'molkky-baton');
         batonEntity.setAttribute('class', 'clickable');
@@ -426,7 +439,7 @@
         btnGrab.addEventListener('mouseleave', () => btnGrab.setAttribute('color', '#10b981'));
         btnGrab.addEventListener('click', () => {
           if (window.vrControllerManager) {
-            window.vrControllerManager.checkAndGrab('right');
+            window.vrControllerManager.grabWithHand('right', 'trigger');
           }
         });
         totem.appendChild(btnGrab);
@@ -533,7 +546,8 @@
 
       <!-- VR Controls Notice -->
       <div class="vr-tip">
-        <span>🥽 <strong>Meta Quest 3 :</strong> Joystick gauche = se déplacer | Joystick droit = pivoter | Gâchette/Grip = attraper et lancer !</span>
+        <span>🥽 <strong>Meta Quest 3 :</strong> Joystick gauche = se déplacer | Joystick droit = pivoter |
+          Gâchette/Grip = attraper et lancer !</span>
       </div>
 
       <!-- History Panel -->
@@ -555,7 +569,8 @@
         <!-- Injected via JavaScript -->
       </div>
       <div class="modal-actions">
-        <button class="btn-glass btn-primary" onclick="window.molkkyGame.closeGameOverModal(); window.molkkyGame.startNewGame();">
+        <button class="btn-glass btn-primary"
+          onclick="window.molkkyGame.closeGameOverModal(); window.molkkyGame.startNewGame();">
           Rejouer
         </button>
         <button class="btn-glass" onclick="window.molkkyGame.closeGameOverModal()">
@@ -567,63 +582,64 @@
 
   <!-- =====================================================================
        A-Frame 3D WebVR Scene
-       Configured specifically for Meta Quest 3 roomscale 6DOF tracking
        ===================================================================== -->
-  <a-scene
-    webxr="referenceSpaceType: local-floor; optionalFeatures: local-floor, hand-tracking;"
-    renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true;"
-    background="color: #87ceeb">
+  <a-scene webxr="referenceSpaceType: local-floor; optionalFeatures: local-floor, hand-tracking;"
+    renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true;" background="color: #87ceeb">
 
     <!-- Scenic Sky with Summer Sun -->
     <a-sky color="#7ec0ee"></a-sky>
 
     <!-- Warm Outdoor Sunlight & Soft Ambient -->
     <a-entity light="type: ambient; color: #ffffff; intensity: 0.65;"></a-entity>
-    <a-entity
-      light="type: directional; color: #fff9e6; intensity: 1.2; castShadow: true;"
-      position="5 10 4">
+    <a-entity light="type: directional; color: #fff9e6; intensity: 1.2; castShadow: true;" position="5 10 4">
     </a-entity>
 
     <!-- Expansive Lawn Ground -->
-    <a-plane
-      id="ground-plane"
-      position="0 0 0"
-      rotation="-90 0 0"
-      width="60"
-      height="60"
+    <a-plane id="ground-plane" position="0 0 0" rotation="-90 0 0" width="60" height="60"
       material="color: #4f7d32; roughness: 0.88;">
     </a-plane>
 
-    <!-- VR Player Camera Rig (Moves via Quest 3 Left Thumbstick) -->
+    <!-- VR Player Camera Rig -->
     <a-entity id="rig" position="0 0 0">
       <!-- Head / Camera (6DOF Tracking via WebXR local-floor) -->
-      <a-camera
-        id="camera"
-        position="0 1.65 0"
-        look-controls="pointerLockEnabled: false">
+      <a-camera id="camera" position="0 1.65 0" look-controls="pointerLockEnabled: false">
         <!-- Mouse cursor for desktop raycasting on 3D buttons (hidden in VR) -->
-        <a-cursor
-          id="mouse-cursor"
-          raycaster="objects: .clickable; far: 15"
+        <a-cursor id="mouse-cursor" raycaster="objects: .clickable; far: 15"
           material="color: #fbbf24; shader: flat; opacity: 0.7;"
           geometry="primitive: ring; radiusInner: 0.007; radiusOuter: 0.012">
         </a-cursor>
       </a-camera>
 
       <!-- Left Meta Quest Controller -->
-      <a-entity
-        id="left-controller"
-        oculus-touch-controls="hand: left; model: true"
+      <a-entity id="left-controller" oculus-touch-controls="hand: left; model: true"
         raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #38bdf8"
         line="color: #38bdf8; opacity: 0.6">
+        <!-- In-hand visual baton when grabbed with left hand -->
+        <a-entity id="left-hand-baton" visible="false" position="0 0.03 -0.06" rotation="45 -15 -80">
+          <a-cylinder radius="0.027" height="0.225" color="#d29a58" roughness="0.65"></a-cylinder>
+          <a-torus radius="0.028" radius-tubular="0.002" rotation="90 0 0" position="0 0.04 0"
+            color="#4a3016"></a-torus>
+          <a-torus radius="0.028" radius-tubular="0.002" rotation="90 0 0" position="0 -0.04 0"
+            color="#4a3016"></a-torus>
+          <a-text value="Balancez et relâchez pour lancer !" align="center" position="0 0.16 0" scale="0.2 0.2 0.2"
+            color="#fef08a" side="double"></a-text>
+        </a-entity>
       </a-entity>
 
       <!-- Right Meta Quest Controller -->
-      <a-entity
-        id="right-controller"
-        oculus-touch-controls="hand: right; model: true"
+      <a-entity id="right-controller" oculus-touch-controls="hand: right; model: true"
         raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #fbbf24"
         line="color: #fbbf24; opacity: 0.6">
+        <!-- In-hand visual baton when grabbed with right hand -->
+        <a-entity id="right-hand-baton" visible="false" position="0 0.03 -0.06" rotation="45 15 80">
+          <a-cylinder radius="0.027" height="0.225" color="#d29a58" roughness="0.65"></a-cylinder>
+          <a-torus radius="0.028" radius-tubular="0.002" rotation="90 0 0" position="0 0.04 0"
+            color="#4a3016"></a-torus>
+          <a-torus radius="0.028" radius-tubular="0.002" rotation="90 0 0" position="0 -0.04 0"
+            color="#4a3016"></a-torus>
+          <a-text value="Balancez et relâchez pour lancer !" align="center" position="0 0.16 0" scale="0.2 0.2 0.2"
+            color="#fef08a" side="double"></a-text>
+        </a-entity>
       </a-entity>
     </a-entity>
 
@@ -670,4 +686,5 @@
     });
   </script>
 </body>
+
 </html>
