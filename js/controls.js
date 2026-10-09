@@ -346,13 +346,16 @@ class VRControllerManager {
           const right = new THREE.Vector3();
           right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
-          // Corrected signs: axisY < 0 moves forward, axisX > 0 moves right
+          // Inverted signs for Meta Quest 3: forward stick moves forward, right stick moves right
           const moveDir = new THREE.Vector3();
-          moveDir.addScaledVector(forward, -axisY);
-          moveDir.addScaledVector(right, axisX);
-          moveDir.normalize();
+          moveDir.addScaledVector(forward, axisY);
+          moveDir.addScaledVector(right, -axisX);
+          if (moveDir.lengthSq() > 0.001) {
+            moveDir.normalize();
+          }
 
-          const moveSpeed = 2.4 * (deltaTime / 1000);
+          const stickMagnitude = Math.min(Math.hypot(axisX, axisY), 1.0);
+          const moveSpeed = 2.4 * stickMagnitude * (deltaTime / 1000);
           rig.object3D.position.addScaledVector(moveDir, moveSpeed);
 
           rig.object3D.position.x = Math.max(Math.min(rig.object3D.position.x, 8), -8);
