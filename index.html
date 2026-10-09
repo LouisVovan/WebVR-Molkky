@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebVR Mölkky - Jeu Immersif WebXR</title>
-  <meta name="description" content="Jeu de Mölkky en réalité virtuelle WebVR / WebXR développé avec A-Frame et Cannon.js.">
+  <meta name="description" content="Jeu de Mölkky en réalité virtuelle WebVR / WebXR développé avec A-Frame et Cannon.js pour ST2AWD.">
 
   <!-- A-Frame VR Framework -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -236,6 +236,11 @@
         r2.position.y = -0.04;
         batonGroup.add(r2);
 
+        // Register baton with VR controller manager
+        if (window.vrControllerManager) {
+          window.vrControllerManager.setBaton(batonEntity);
+        }
+
         // Initialize Cannon physics with registered meshes
         if (window.molkkyPhysics) {
           window.molkkyPhysics.setupBaton(batonGroup, { x: 0.35, y: 0.95, z: -0.25 });
@@ -352,11 +357,12 @@
         totem.appendChild(feedbackText);
 
         // 3D Clickable Buttons for VR Laser
+        // Button 1: Nouvelle Partie
         const btnNew = document.createElement('a-box');
         btnNew.setAttribute('class', 'clickable');
-        btnNew.setAttribute('position', '-0.22 1.12 0.09');
-        btnNew.setAttribute('width', '0.34');
-        btnNew.setAttribute('height', '0.1');
+        btnNew.setAttribute('position', '-0.26 1.12 0.09');
+        btnNew.setAttribute('width', '0.26');
+        btnNew.setAttribute('height', '0.09');
         btnNew.setAttribute('depth', '0.02');
         btnNew.setAttribute('color', '#f59e0b');
         const btnNewTxt = document.createElement('a-text');
@@ -364,7 +370,7 @@
         btnNewTxt.setAttribute('align', 'center');
         btnNewTxt.setAttribute('color', '#0f172a');
         btnNewTxt.setAttribute('position', '0 0 0.02');
-        btnNewTxt.setAttribute('width', '1.6');
+        btnNewTxt.setAttribute('width', '1.5');
         btnNew.appendChild(btnNewTxt);
 
         btnNew.addEventListener('mouseenter', () => btnNew.setAttribute('color', '#fbbf24'));
@@ -374,19 +380,20 @@
         });
         totem.appendChild(btnNew);
 
+        // Button 2: Difficulté
         const btnDiff = document.createElement('a-box');
         btnDiff.setAttribute('class', 'clickable');
-        btnDiff.setAttribute('position', '0.22 1.12 0.09');
-        btnDiff.setAttribute('width', '0.34');
-        btnDiff.setAttribute('height', '0.1');
+        btnDiff.setAttribute('position', '0 1.12 0.09');
+        btnDiff.setAttribute('width', '0.24');
+        btnDiff.setAttribute('height', '0.09');
         btnDiff.setAttribute('depth', '0.02');
         btnDiff.setAttribute('color', '#3b82f6');
         const btnDiffTxt = document.createElement('a-text');
-        btnDiffTxt.setAttribute('value', 'Difficulté');
+        btnDiffTxt.setAttribute('value', 'Niveau');
         btnDiffTxt.setAttribute('align', 'center');
         btnDiffTxt.setAttribute('color', '#ffffff');
         btnDiffTxt.setAttribute('position', '0 0 0.02');
-        btnDiffTxt.setAttribute('width', '1.6');
+        btnDiffTxt.setAttribute('width', '1.5');
         btnDiff.appendChild(btnDiffTxt);
 
         btnDiff.addEventListener('mouseenter', () => btnDiff.setAttribute('color', '#60a5fa'));
@@ -399,6 +406,31 @@
         });
         totem.appendChild(btnDiff);
 
+        // Button 3: Prendre / Rappeler le Bâton
+        const btnGrab = document.createElement('a-box');
+        btnGrab.setAttribute('class', 'clickable');
+        btnGrab.setAttribute('position', '0.26 1.12 0.09');
+        btnGrab.setAttribute('width', '0.24');
+        btnGrab.setAttribute('height', '0.09');
+        btnGrab.setAttribute('depth', '0.02');
+        btnGrab.setAttribute('color', '#10b981');
+        const btnGrabTxt = document.createElement('a-text');
+        btnGrabTxt.setAttribute('value', 'Bâton');
+        btnGrabTxt.setAttribute('align', 'center');
+        btnGrabTxt.setAttribute('color', '#0f172a');
+        btnGrabTxt.setAttribute('position', '0 0 0.02');
+        btnGrabTxt.setAttribute('width', '1.5');
+        btnGrab.appendChild(btnGrabTxt);
+
+        btnGrab.addEventListener('mouseenter', () => btnGrab.setAttribute('color', '#34d399'));
+        btnGrab.addEventListener('mouseleave', () => btnGrab.setAttribute('color', '#10b981'));
+        btnGrab.addEventListener('click', () => {
+          if (window.vrControllerManager) {
+            window.vrControllerManager.checkAndGrab('right');
+          }
+        });
+        totem.appendChild(btnGrab);
+
         sceneEl.appendChild(totem);
       },
 
@@ -408,7 +440,7 @@
           window.molkkyPhysics.step(deltaTime / 1000);
         }
 
-        // Update VR controller tracking and throw assist
+        // Update VR controller tracking, locomotion and throw assist
         if (window.vrControllerManager) {
           window.vrControllerManager.update(time, deltaTime);
         }
@@ -463,7 +495,7 @@
         </div>
       </div>
 
-      <!-- Timer & Difficulty -->
+      <!-- Timer, Difficulty & Enter VR Button -->
       <div class="hud-meta">
         <div class="timer-card">
           <span>⏱</span>
@@ -472,6 +504,9 @@
         <button id="btn-diff-cycle" class="btn-glass" onclick="toggleDifficulty()">
           <span>Niveau:</span>
           <strong id="hud-difficulty" style="color: var(--accent-blue);">Normal</strong>
+        </button>
+        <button class="btn-glass btn-vr" onclick="enterVRMode()">
+          🥽 Entrer en VR
         </button>
       </div>
     </header>
@@ -498,7 +533,7 @@
 
       <!-- VR Controls Notice -->
       <div class="vr-tip">
-        <span>🥽 <strong>Casque VR :</strong> Utilisez le grip/gâchette pour attraper et lancer le Mölkky. Visez avec le laser.</span>
+        <span>🥽 <strong>Meta Quest 3 :</strong> Joystick gauche = se déplacer | Joystick droit = pivoter | Gâchette/Grip = attraper et lancer !</span>
       </div>
 
       <!-- History Panel -->
@@ -532,8 +567,10 @@
 
   <!-- =====================================================================
        A-Frame 3D WebVR Scene
+       Configured specifically for Meta Quest 3 roomscale 6DOF tracking
        ===================================================================== -->
   <a-scene
+    webxr="referenceSpaceType: local-floor; optionalFeatures: local-floor, hand-tracking;"
     renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true;"
     background="color: #87ceeb">
 
@@ -554,18 +591,17 @@
       rotation="-90 0 0"
       width="60"
       height="60"
-      material="color: #4f7d32; roughness: 0.9;">
+      material="color: #4f7d32; roughness: 0.88;">
     </a-plane>
 
-    <!-- VR Player Camera Rig -->
+    <!-- VR Player Camera Rig (Moves via Quest 3 Left Thumbstick) -->
     <a-entity id="rig" position="0 0 0">
-      <!-- Head / Camera -->
+      <!-- Head / Camera (6DOF Tracking via WebXR local-floor) -->
       <a-camera
         id="camera"
         position="0 1.65 0"
-        look-controls="pointerLockEnabled: false"
-        wasd-controls="acceleration: 15">
-        <!-- Mouse cursor for desktop raycasting on 3D buttons -->
+        look-controls="pointerLockEnabled: false">
+        <!-- Mouse cursor for desktop raycasting on 3D buttons (hidden in VR) -->
         <a-cursor
           id="mouse-cursor"
           raycaster="objects: .clickable; far: 15"
@@ -574,20 +610,20 @@
         </a-cursor>
       </a-camera>
 
-      <!-- Left VR Controller (Oculus Touch / Vive / Generic WebXR) -->
+      <!-- Left Meta Quest Controller -->
       <a-entity
         id="left-controller"
-        oculus-touch-controls="hand: left"
-        laser-controls="hand: left"
-        raycaster="objects: .clickable; far: 15; lineColor: #38bdf8; lineOpacity: 0.7">
+        oculus-touch-controls="hand: left; model: true"
+        raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #38bdf8"
+        line="color: #38bdf8; opacity: 0.6">
       </a-entity>
 
-      <!-- Right VR Controller (Oculus Touch / Vive / Generic WebXR) -->
+      <!-- Right Meta Quest Controller -->
       <a-entity
         id="right-controller"
-        oculus-touch-controls="hand: right"
-        laser-controls="hand: right"
-        raycaster="objects: .clickable; far: 15; lineColor: #fbbf24; lineOpacity: 0.7">
+        oculus-touch-controls="hand: right; model: true"
+        raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #fbbf24"
+        line="color: #fbbf24; opacity: 0.6">
       </a-entity>
     </a-entity>
 
@@ -603,6 +639,35 @@
       const nextLevel = levels[(currentIdx + 1) % levels.length];
       window.molkkyGame.startNewGame(nextLevel);
     }
+
+    function enterVRMode() {
+      const sceneEl = document.querySelector('a-scene');
+      if (sceneEl) {
+        if (window.soundEngine) window.soundEngine.ensureContext();
+        sceneEl.enterVR();
+      }
+    }
+
+    // Adapt UI when entering/exiting VR on Meta Quest
+    window.addEventListener('DOMContentLoaded', () => {
+      const sceneEl = document.querySelector('a-scene');
+      if (!sceneEl) return;
+
+      sceneEl.addEventListener('enter-vr', () => {
+        const hud = document.getElementById('hud-container');
+        if (hud) hud.classList.add('in-vr');
+        const cursor = document.getElementById('mouse-cursor');
+        if (cursor) cursor.setAttribute('visible', 'false');
+        if (window.soundEngine) window.soundEngine.ensureContext();
+      });
+
+      sceneEl.addEventListener('exit-vr', () => {
+        const hud = document.getElementById('hud-container');
+        if (hud) hud.classList.remove('in-vr');
+        const cursor = document.getElementById('mouse-cursor');
+        if (cursor) cursor.setAttribute('visible', 'true');
+      });
+    });
   </script>
 </body>
 </html>

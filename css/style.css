@@ -57,6 +57,16 @@ body, html {
   padding: 24px;
 }
 
+/* Hide 2D HTML overlay when inside immersive VR on Meta Quest */
+#hud-container.in-vr {
+  display: none !important;
+}
+
+/* Ensure A-Frame VR entry button is always on top */
+.a-enter-vr {
+  z-index: 999999 !important;
+}
+
 .hud-interactive {
   pointer-events: auto;
 }
@@ -250,6 +260,18 @@ body, html {
 .btn-primary:hover {
   background: linear-gradient(135deg, #f59e0b, #fbbf24);
   box-shadow: 0 0 20px var(--accent-gold-glow);
+}
+
+.btn-vr {
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  border-color: #60a5fa;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.btn-vr:hover {
+  background: linear-gradient(135deg, #3b82f6, #60a5fa);
+  box-shadow: 0 0 20px rgba(96, 165, 250, 0.5);
 }
 
 /* History Floating Drawer */

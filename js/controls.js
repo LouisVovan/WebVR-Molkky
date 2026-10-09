@@ -1,7 +1,7 @@
 /**
  * WebXR Controller & Throw Interaction Manager
- * Handles 6DOF controller grabbing, velocity tracking, throwing physics,
- * haptics, trajectory visualizer for Easy mode, and desktop mouse fallback
+ * Handles Meta Quest 3 6DOF tracking, thumbstick locomotion & snap turn,
+ * direct gamepad polling, grab & throw physics, haptics, and trajectory visualizer
  */
 
 class VRControllerManager {
@@ -18,6 +18,9 @@ class VRControllerManager {
     this.lastHandQuat = new THREE.Quaternion();
     this.lastTimestamp = 0;
 
+    // Locomotion & turn debounce
+    this.lastSnapTime = 0;
+
     // Three.js Line object for curved trajectory visualization in Easy mode
     this.trajectoryLine = null;
 
@@ -32,17 +35,28 @@ class VRControllerManager {
     });
   }
 
+  setBaton(el) {
+    this.batonEl = el;
+  }
+
+  getBaton() {
+    if (!this.batonEl) {
+      this.batonEl = document.getElementById('molkky-baton');
+    }
+    return this.batonEl;
+  }
+
   setupElements() {
     this.leftHandEl = document.getElementById('left-controller');
     this.rightHandEl = document.getElementById('right-controller');
-    this.batonEl = document.getElementById('molkky-baton');
+    this.getBaton();
   }
 
   setupEventListeners() {
     const bindHand = (el, handName) => {
       if (!el) return;
       ['triggerdown', 'gripdown', 'selectstart', 'squeezestart'].forEach(evt => {
-        el.addEventListener(evt, () => this.onGrab(handName));
+        el.addEventListener(evt, () => this.checkAndGrab(handName));
       });
       ['triggerup', 'gripup', 'selectend', 'squeezeend'].forEach(evt => {
         el.addEventListener(evt, () => this.onRelease(handName));
@@ -52,17 +66,18 @@ class VRControllerManager {
     bindHand(this.leftHandEl, 'left');
     bindHand(this.rightHandEl, 'right');
 
-    // Direct click/laser on baton
-    if (this.batonEl) {
-      this.batonEl.addEventListener('click', (e) => {
+    // Also support direct click/laser on baton
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target && (target.id === 'molkky-baton' || (target.closest && target.closest('#molkky-baton')))) {
         const cursor = e.detail && e.detail.cursorEl;
         if (cursor === this.leftHandEl) {
-          this.onGrab('left');
+          this.checkAndGrab('left');
         } else {
-          this.onGrab('right');
+          this.checkAndGrab('right');
         }
-      });
-    }
+      }
+    });
   }
 
   triggerHaptic(hand, intensity = 0.5, duration = 60) {
@@ -81,22 +96,28 @@ class VRControllerManager {
     }
   }
 
-  onGrab(hand) {
+  /**
+   * Check distance and grab the Mölkky baton
+   */
+  checkAndGrab(hand) {
     if (!window.molkkyGame || window.molkkyGame.state !== 'READY') return;
     if (this.heldByHand) return;
 
     const handEl = hand === 'left' ? this.leftHandEl : this.rightHandEl;
-    if (!handEl || !this.batonEl) return;
+    const baton = this.getBaton();
+    if (!handEl || !baton) return;
 
-    // Check distance between hand and baton
     const handPos = new THREE.Vector3();
     const batonPos = new THREE.Vector3();
     handEl.object3D.getWorldPosition(handPos);
-    this.batonEl.object3D.getWorldPosition(batonPos);
+    baton.object3D.getWorldPosition(batonPos);
 
-    // Allow grab within 1.4m radius
-    const dist = handPos.distanceTo(batonPos);
-    if (dist < 1.4) {
+    const distToBaton = handPos.distanceTo(batonPos);
+    const standPos = new THREE.Vector3(0.35, 0.95, -0.25);
+    const distToStand = handPos.distanceTo(standPos);
+
+    // Allow grab if hand is near baton (< 1.5m) OR near the throwing stand (< 1.8m)
+    if (distToBaton < 1.5 || distToStand < 1.8) {
       this.heldByHand = hand;
       this.velocityHistory = [];
       this.lastHandPos.copy(handPos);
@@ -104,7 +125,7 @@ class VRControllerManager {
       this.lastTimestamp = performance.now();
 
       window.molkkyGame.state = 'AIMING';
-      this.triggerHaptic(hand, 0.4, 70);
+      this.triggerHaptic(hand, 0.5, 75);
 
       if (window.soundEngine) {
         window.soundEngine.playGrab(handPos);
@@ -112,6 +133,9 @@ class VRControllerManager {
     }
   }
 
+  /**
+   * Release and launch the baton into flight
+   */
   onRelease(hand) {
     if (this.heldByHand !== hand) return;
     this.heldByHand = null;
@@ -129,7 +153,7 @@ class VRControllerManager {
     // Natural angular tumble
     const angVel = new THREE.Vector3(
       (Math.random() - 0.5) * 2,
-      -throwVel.length() * 1.6,
+      -throwVel.length() * 1.5,
       (Math.random() - 0.5) * 3
     );
 
@@ -195,25 +219,34 @@ class VRControllerManager {
   }
 
   /**
-   * Update called every animation frame (tick)
+   * Main per-frame update loop called from A-Frame tick
    */
   update(time, deltaTime) {
+    // 1. Direct WebXR Gamepad handling for Meta Quest 3 (locomotion, snap turn, grabbing)
+    this.updateWebXRGamepads(deltaTime);
+
+    // 2. Track held baton
     if (!this.heldByHand) {
       this.hideTrajectory();
       return;
     }
 
     const handEl = this.heldByHand === 'left' ? this.leftHandEl : this.rightHandEl;
-    if (!handEl || !this.batonEl) return;
+    const baton = this.getBaton();
+    if (!handEl || !baton) return;
 
     const currentPos = new THREE.Vector3();
     const currentQuat = new THREE.Quaternion();
     handEl.object3D.getWorldPosition(currentPos);
     handEl.object3D.getWorldQuaternion(currentQuat);
 
+    // Offset slightly forward in hand
+    const holdOffset = new THREE.Vector3(0, 0, -0.06).applyQuaternion(currentQuat);
+    const holdPos = currentPos.clone().add(holdOffset);
+
     // Update Cannon kinematic body to follow hand
     if (window.molkkyPhysics) {
-      window.molkkyPhysics.holdBaton(currentPos, currentQuat);
+      window.molkkyPhysics.holdBaton(holdPos, currentQuat);
     }
 
     // Track velocity
@@ -236,9 +269,87 @@ class VRControllerManager {
     // Visual trajectory assistance in Easy mode
     if (window.molkkyGame && window.molkkyGame.difficulty === 'facile') {
       const predictedVel = this.calculateReleaseVelocity();
-      this.renderTrajectoryArc(currentPos, predictedVel);
+      this.renderTrajectoryArc(holdPos, predictedVel);
     } else {
       this.hideTrajectory();
+    }
+  }
+
+  /**
+   * Direct WebXR Gamepad Polling:
+   * Handles Meta Quest 3 thumbstick locomotion (left stick),
+   * snap turn (right stick), and grab/throw buttons
+   */
+  updateWebXRGamepads(deltaTime) {
+    const scene = document.querySelector('a-scene');
+    if (!scene || !scene.xrSession) return;
+
+    const session = scene.xrSession;
+    const rig = document.getElementById('rig');
+    const camera = document.getElementById('camera');
+    if (!rig || !camera) return;
+
+    const moveSpeed = 2.4 * (deltaTime / 1000);
+
+    for (const source of session.inputSources) {
+      if (!source.gamepad) continue;
+      const gp = source.gamepad;
+      const hand = source.handedness; // 'left' or 'right'
+
+      // Meta Quest axes: axes[2] is X, axes[3] is Y
+      const axisX = gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0);
+      const axisY = gp.axes.length >= 4 ? gp.axes[3] : (gp.axes[1] || 0);
+
+      // Buttons: Trigger (0), Grip (1), Button A/X (4), Button B/Y (5)
+      const triggerPressed = gp.buttons[0] && gp.buttons[0].pressed;
+      const gripPressed = gp.buttons[1] && gp.buttons[1].pressed;
+      const isSqueezing = triggerPressed || gripPressed;
+
+      // 1. LEFT THUMBSTICK: Smooth Locomotion
+      if (hand === 'left') {
+        const deadzone = 0.15;
+        if (Math.abs(axisX) > deadzone || Math.abs(axisY) > deadzone) {
+          const camQuat = camera.object3D.quaternion;
+          const euler = new THREE.Euler().setFromQuaternion(camQuat, 'YXZ');
+          const yaw = euler.y;
+
+          const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+          const strafe = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+
+          const moveDir = new THREE.Vector3();
+          moveDir.addScaledVector(forward, -axisY);
+          moveDir.addScaledVector(strafe, axisX);
+          moveDir.normalize();
+
+          rig.object3D.position.addScaledVector(moveDir, moveSpeed);
+
+          // Boundaries
+          rig.object3D.position.x = Math.max(Math.min(rig.object3D.position.x, 8), -8);
+          rig.object3D.position.z = Math.max(Math.min(rig.object3D.position.z, 2), -5);
+        }
+      }
+
+      // 2. RIGHT THUMBSTICK: Snap Turn (30 degrees)
+      if (hand === 'right') {
+        const snapThreshold = 0.65;
+        const now = performance.now();
+        if (Math.abs(axisX) > snapThreshold && (!this.lastSnapTime || now - this.lastSnapTime > 350)) {
+          const snapAngle = (axisX > 0 ? -1 : 1) * (Math.PI / 6);
+          rig.object3D.rotation.y += snapAngle;
+          this.lastSnapTime = now;
+        }
+      }
+
+      // 3. GRAB & THROW VIA GAMEPAD BUTTON STATE
+      if (isSqueezing) {
+        if (!this.heldByHand) {
+          this.checkAndGrab(hand);
+        }
+      } else {
+        if (this.heldByHand === hand) {
+          this.onRelease(hand);
+        }
+      }
     }
   }
 
@@ -276,7 +387,6 @@ class VRControllerManager {
       simVel.addScaledVector(gravity, dt);
 
       if (simPos.y < 0.01) {
-        // Clamp remaining points to ground
         for (let j = i + 1; j < 30; j++) {
           positions[j * 3]     = simPos.x;
           positions[j * 3 + 1] = 0.01;
