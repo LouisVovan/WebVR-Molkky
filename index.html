@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebVR Mölkky - Jeu Immersif WebXR</title>
+  <meta name="description" content="Jeu de Mölkky en réalité virtuelle WebVR / WebXR développé avec A-Frame et Cannon.js.">
+
+  <!-- A-Frame VR Framework -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+  <!-- Cannon.js 3D Physics Engine -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+
+  <!-- Application Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Procedural Textures & Audio -->
+  <script src="js/textures.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/controls.js"></script>
+
+  <script>
+    /**
+     * A-Frame Component: Initializes Mölkky 3D Scene, Pins, Environment, and Score Totem
+     */
+    AFRAME.registerComponent('molkky-manager', {
+      init: function () {
+        this.pinMeshesByNum = {};
+        this.woodTexture = null;
+        this.grassTexture = null;
+
+        const onReady = () => {
+          this.setupMaterials();
+          this.buildEnvironment();
+          this.buildScoreTotem();
+          this.buildThrowZone();
+          this.buildPinsAndBaton();
+
+          // Start default game
+          if (window.molkkyGame) {
+            window.molkkyGame.startNewGame('normal');
+          }
+        };
+
+        if (this.el.sceneEl.hasLoaded) {
+          onReady();
+        } else {
+          this.el.sceneEl.addEventListener('loaded', onReady);
+        }
+      },
+
+      setupMaterials: function () {
+        // Procedural wood canvas texture
+        const woodCanvas = TextureGenerator.createWoodCanvas(512, 512);
+        this.woodTexture = new THREE.CanvasTexture(woodCanvas);
+        this.woodTexture.wrapS = THREE.RepeatWrapping;
+        this.woodTexture.wrapT = THREE.RepeatWrapping;
+
+        // Procedural grass canvas texture
+        const grassCanvas = TextureGenerator.createGrassCanvas(512, 512);
+        this.grassTexture = new THREE.CanvasTexture(grassCanvas);
+        this.grassTexture.wrapS = THREE.RepeatWrapping;
+        this.grassTexture.wrapT = THREE.RepeatWrapping;
+        this.grassTexture.repeat.set(24, 24);
+
+        // Apply grass texture to ground
+        const ground = document.getElementById('ground-plane');
+        if (ground && ground.getObject3D('mesh')) {
+          const mesh = ground.getObject3D('mesh');
+          mesh.material.map = this.grassTexture;
+          mesh.material.roughness = 0.88;
+          mesh.material.needsUpdate = true;
+        }
+      },
+
+      buildEnvironment: function () {
+        const sceneEl = this.el.sceneEl;
+
+        // Scenic trees surrounding the park
+        const treeCoords = [
+          { x: -7, z: -8 }, { x: 7, z: -9 },
+          { x: -8, z: -2 }, { x: 8, z: -3 },
+          { x: -6, z: 4 },  { x: 6, z: 4 },
+          { x: -4, z: -12 }, { x: 4, z: -12 }, { x: 0, z: -14 }
+        ];
+
+        treeCoords.forEach(pos => {
+          const treeGroup = document.createElement('a-entity');
+          treeGroup.setAttribute('position', `${pos.x} 0 ${pos.z}`);
+
+          // Trunk
+          const trunk = document.createElement('a-cylinder');
+          trunk.setAttribute('radius', '0.22');
+          trunk.setAttribute('height', '2.2');
+          trunk.setAttribute('position', '0 1.1 0');
+          trunk.setAttribute('color', '#5c3a21');
+          treeGroup.appendChild(trunk);
+
+          // Foliage cones
+          const f1 = document.createElement('a-cone');
+          f1.setAttribute('radius-bottom', '1.8');
+          f1.setAttribute('radius-top', '0.1');
+          f1.setAttribute('height', '2.4');
+          f1.setAttribute('position', '0 2.8 0');
+          f1.setAttribute('color', '#2d5a27');
+          treeGroup.appendChild(f1);
+
+          const f2 = document.createElement('a-cone');
+          f2.setAttribute('radius-bottom', '1.4');
+          f2.setAttribute('radius-top', '0.05');
+          f2.setAttribute('height', '2.0');
+          f2.setAttribute('position', '0 3.8 0');
+          f2.setAttribute('color', '#386e30');
+          treeGroup.appendChild(f2);
+
+          sceneEl.appendChild(treeGroup);
+        });
+
+        // Wooden fence posts at boundary
+        for (let x = -9; x <= 9; x += 3) {
+          const postBack = document.createElement('a-box');
+          postBack.setAttribute('position', `${x} 0.5 -12`);
+          postBack.setAttribute('width', '0.12');
+          postBack.setAttribute('depth', '0.12');
+          postBack.setAttribute('height', '1.0');
+          postBack.setAttribute('color', '#8b5a2b');
+          sceneEl.appendChild(postBack);
+        }
+      },
+
+      buildThrowZone: function () {
+        const sceneEl = this.el.sceneEl;
+
+        // Official Mölkkaari (wooden throwing line at z = -0.1)
+        const molkkaari = document.createElement('a-box');
+        molkkaari.setAttribute('id', 'molkkaari');
+        molkkaari.setAttribute('position', '0 0.02 -0.1');
+        molkkaari.setAttribute('width', '1.4');
+        molkkaari.setAttribute('height', '0.04');
+        molkkaari.setAttribute('depth', '0.08');
+        molkkaari.setAttribute('color', '#8b5a2b');
+        sceneEl.appendChild(molkkaari);
+
+        // Wooden stand / pedestal to hold baton at waist height
+        const stand = document.createElement('a-box');
+        stand.setAttribute('id', 'baton-stand');
+        stand.setAttribute('position', '0.35 0.45 -0.25');
+        stand.setAttribute('width', '0.16');
+        stand.setAttribute('height', '0.9');
+        stand.setAttribute('depth', '0.22');
+        stand.setAttribute('color', '#654321');
+        sceneEl.appendChild(stand);
+
+        // Stand tabletop tray
+        const tray = document.createElement('a-box');
+        tray.setAttribute('position', '0.35 0.91 -0.25');
+        tray.setAttribute('width', '0.22');
+        tray.setAttribute('height', '0.03');
+        tray.setAttribute('depth', '0.28');
+        tray.setAttribute('color', '#4a3016');
+        sceneEl.appendChild(tray);
+      },
+
+      buildPinsAndBaton: function () {
+        const sceneEl = this.el.sceneEl;
+        const R = window.molkkyPhysics.PIN_RADIUS;
+        const H = window.molkkyPhysics.PIN_HEIGHT;
+
+        // 1. Create 12 Mölkky Pins with direct Three.js meshes
+        for (let num = 1; num <= 12; num++) {
+          const pinEntity = document.createElement('a-entity');
+          pinEntity.setAttribute('id', `pin-${num}`);
+          sceneEl.appendChild(pinEntity);
+
+          const group = pinEntity.object3D;
+
+          // Wood cylinder body
+          const cylGeom = new THREE.CylinderGeometry(R, R, H, 24);
+          const woodMat = new THREE.MeshStandardMaterial({
+            map: this.woodTexture,
+            roughness: 0.72,
+            metalness: 0.08
+          });
+          const cylMesh = new THREE.Mesh(cylGeom, woodMat);
+          group.add(cylMesh);
+
+          // Top beveled face with official number (cut at 45° angle facing thrower)
+          const numCanvas = TextureGenerator.createPinNumberCanvas(num);
+          const numTex = new THREE.CanvasTexture(numCanvas);
+          const discGeom = new THREE.CircleGeometry(R * 0.95, 24);
+          const discMat = new THREE.MeshStandardMaterial({
+            map: numTex,
+            roughness: 0.6
+          });
+          const discMesh = new THREE.Mesh(discGeom, discMat);
+          discMesh.rotation.x = -Math.PI / 4; // 45° tilt
+          discMesh.position.set(0, H / 2 + 0.001, 0.003);
+          group.add(discMesh);
+
+          this.pinMeshesByNum[num] = group;
+        }
+
+        // 2. Create the Mölkky throwing baton
+        const batonEntity = document.createElement('a-entity');
+        batonEntity.setAttribute('id', 'molkky-baton');
+        batonEntity.setAttribute('class', 'clickable');
+        sceneEl.appendChild(batonEntity);
+
+        const batonGroup = batonEntity.object3D;
+        const BR = window.molkkyPhysics.BATON_RADIUS;
+        const BH = window.molkkyPhysics.BATON_HEIGHT;
+
+        const batonGeom = new THREE.CylinderGeometry(BR, BR, BH, 24);
+        const batonMat = new THREE.MeshStandardMaterial({
+          map: this.woodTexture,
+          roughness: 0.65,
+          metalness: 0.05
+        });
+        const batonMesh = new THREE.Mesh(batonGeom, batonMat);
+        batonGroup.add(batonMesh);
+
+        // Grip rings
+        const ringGeom = new THREE.TorusGeometry(BR + 0.001, 0.002, 8, 24);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x4a3016 });
+
+        const r1 = new THREE.Mesh(ringGeom, ringMat);
+        r1.rotation.x = Math.PI / 2;
+        r1.position.y = 0.04;
+        batonGroup.add(r1);
+
+        const r2 = new THREE.Mesh(ringGeom, ringMat);
+        r2.rotation.x = Math.PI / 2;
+        r2.position.y = -0.04;
+        batonGroup.add(r2);
+
+        // Initialize Cannon physics with registered meshes
+        if (window.molkkyPhysics) {
+          window.molkkyPhysics.setupBaton(batonGroup, { x: 0.35, y: 0.95, z: -0.25 });
+          window.molkkyPhysics.setupPins(this.pinMeshesByNum, -3.5);
+        }
+      },
+
+      buildScoreTotem: function () {
+        const sceneEl = this.el.sceneEl;
+
+        // Wooden Totem Standing to the Right of the Player
+        const totem = document.createElement('a-entity');
+        totem.setAttribute('id', 'vr-totem');
+        totem.setAttribute('position', '1.35 0 -0.5');
+        totem.setAttribute('rotation', '0 -35 0');
+
+        // Main Totem Post
+        const post = document.createElement('a-box');
+        post.setAttribute('position', '0 0.85 0');
+        post.setAttribute('width', '0.14');
+        post.setAttribute('height', '1.7');
+        post.setAttribute('depth', '0.14');
+        post.setAttribute('color', '#50331e');
+        totem.appendChild(post);
+
+        // Scoreboard Backing Plaque
+        const plaque = document.createElement('a-box');
+        plaque.setAttribute('position', '0 1.55 0.06');
+        plaque.setAttribute('width', '0.9');
+        plaque.setAttribute('height', '1.1');
+        plaque.setAttribute('depth', '0.04');
+        plaque.setAttribute('color', '#1e293b');
+        totem.appendChild(plaque);
+
+        // Plaque Wooden/Gold Frame Border
+        const frame = document.createElement('a-box');
+        frame.setAttribute('position', '0 1.55 0.04');
+        frame.setAttribute('width', '0.96');
+        frame.setAttribute('height', '1.16');
+        frame.setAttribute('depth', '0.03');
+        frame.setAttribute('color', '#d4af37');
+        totem.appendChild(frame);
+
+        // 3D VR Board Texts
+        const title = document.createElement('a-text');
+        title.setAttribute('value', 'MÖLKKY VR');
+        title.setAttribute('align', 'center');
+        title.setAttribute('color', '#fbbf24');
+        title.setAttribute('position', '0 1.95 0.09');
+        title.setAttribute('width', '2.4');
+        totem.appendChild(title);
+
+        const scoreText = document.createElement('a-text');
+        scoreText.setAttribute('id', 'vr-score-text');
+        scoreText.setAttribute('value', 'SCORE: 0 / 50');
+        scoreText.setAttribute('align', 'center');
+        scoreText.setAttribute('color', '#ffffff');
+        scoreText.setAttribute('position', '0 1.8 0.09');
+        scoreText.setAttribute('width', '2.8');
+        totem.appendChild(scoreText);
+
+        const lastText = document.createElement('a-text');
+        lastText.setAttribute('id', 'vr-last-text');
+        lastText.setAttribute('value', 'Dernier lancer: +0 pts');
+        lastText.setAttribute('align', 'center');
+        lastText.setAttribute('color', '#34d399');
+        lastText.setAttribute('position', '0 1.67 0.09');
+        lastText.setAttribute('width', '2.1');
+        totem.appendChild(lastText);
+
+        const throwsText = document.createElement('a-text');
+        throwsText.setAttribute('id', 'vr-throws-text');
+        throwsText.setAttribute('value', 'Lancers: 0');
+        throwsText.setAttribute('align', 'center');
+        throwsText.setAttribute('color', '#94a3b8');
+        throwsText.setAttribute('position', '-0.2 1.55 0.09');
+        throwsText.setAttribute('width', '1.9');
+        totem.appendChild(throwsText);
+
+        const missesText = document.createElement('a-text');
+        missesText.setAttribute('id', 'vr-misses-text');
+        missesText.setAttribute('value', 'Échecs: 0 / 3');
+        missesText.setAttribute('align', 'center');
+        missesText.setAttribute('color', '#f87171');
+        missesText.setAttribute('position', '0.2 1.55 0.09');
+        missesText.setAttribute('width', '1.9');
+        totem.appendChild(missesText);
+
+        const diffText = document.createElement('a-text');
+        diffText.setAttribute('id', 'vr-diff-text');
+        diffText.setAttribute('value', 'Difficulté: Normal');
+        diffText.setAttribute('align', 'center');
+        diffText.setAttribute('color', '#60a5fa');
+        diffText.setAttribute('position', '0 1.44 0.09');
+        diffText.setAttribute('width', '1.8');
+        totem.appendChild(diffText);
+
+        const timerText = document.createElement('a-text');
+        timerText.setAttribute('id', 'vr-timer-text');
+        timerText.setAttribute('value', 'Temps: 00:00');
+        timerText.setAttribute('align', 'center');
+        timerText.setAttribute('color', '#cbd5e1');
+        timerText.setAttribute('position', '0 1.35 0.09');
+        timerText.setAttribute('width', '1.8');
+        totem.appendChild(timerText);
+
+        const feedbackText = document.createElement('a-text');
+        feedbackText.setAttribute('id', 'vr-feedback-text');
+        feedbackText.setAttribute('value', 'Prêt à jouer');
+        feedbackText.setAttribute('align', 'center');
+        feedbackText.setAttribute('color', '#fef08a');
+        feedbackText.setAttribute('position', '0 1.25 0.09');
+        feedbackText.setAttribute('width', '1.7');
+        totem.appendChild(feedbackText);
+
+        // 3D Clickable Buttons for VR Laser
+        const btnNew = document.createElement('a-box');
+        btnNew.setAttribute('class', 'clickable');
+        btnNew.setAttribute('position', '-0.22 1.12 0.09');
+        btnNew.setAttribute('width', '0.34');
+        btnNew.setAttribute('height', '0.1');
+        btnNew.setAttribute('depth', '0.02');
+        btnNew.setAttribute('color', '#f59e0b');
+        const btnNewTxt = document.createElement('a-text');
+        btnNewTxt.setAttribute('value', 'Nouvelle');
+        btnNewTxt.setAttribute('align', 'center');
+        btnNewTxt.setAttribute('color', '#0f172a');
+        btnNewTxt.setAttribute('position', '0 0 0.02');
+        btnNewTxt.setAttribute('width', '1.6');
+        btnNew.appendChild(btnNewTxt);
+
+        btnNew.addEventListener('mouseenter', () => btnNew.setAttribute('color', '#fbbf24'));
+        btnNew.addEventListener('mouseleave', () => btnNew.setAttribute('color', '#f59e0b'));
+        btnNew.addEventListener('click', () => {
+          if (window.molkkyGame) window.molkkyGame.startNewGame();
+        });
+        totem.appendChild(btnNew);
+
+        const btnDiff = document.createElement('a-box');
+        btnDiff.setAttribute('class', 'clickable');
+        btnDiff.setAttribute('position', '0.22 1.12 0.09');
+        btnDiff.setAttribute('width', '0.34');
+        btnDiff.setAttribute('height', '0.1');
+        btnDiff.setAttribute('depth', '0.02');
+        btnDiff.setAttribute('color', '#3b82f6');
+        const btnDiffTxt = document.createElement('a-text');
+        btnDiffTxt.setAttribute('value', 'Difficulté');
+        btnDiffTxt.setAttribute('align', 'center');
+        btnDiffTxt.setAttribute('color', '#ffffff');
+        btnDiffTxt.setAttribute('position', '0 0 0.02');
+        btnDiffTxt.setAttribute('width', '1.6');
+        btnDiff.appendChild(btnDiffTxt);
+
+        btnDiff.addEventListener('mouseenter', () => btnDiff.setAttribute('color', '#60a5fa'));
+        btnDiff.addEventListener('mouseleave', () => btnDiff.setAttribute('color', '#3b82f6'));
+        btnDiff.addEventListener('click', () => {
+          if (window.molkkyGame) {
+            const next = window.molkkyGame.difficulty === 'facile' ? 'normal' : (window.molkkyGame.difficulty === 'normal' ? 'difficile' : 'facile');
+            window.molkkyGame.startNewGame(next);
+          }
+        });
+        totem.appendChild(btnDiff);
+
+        sceneEl.appendChild(totem);
+      },
+
+      tick: function (time, deltaTime) {
+        // Step physics simulation
+        if (window.molkkyPhysics) {
+          window.molkkyPhysics.step(deltaTime / 1000);
+        }
+
+        // Update VR controller tracking and throw assist
+        if (window.vrControllerManager) {
+          window.vrControllerManager.update(time, deltaTime);
+        }
+
+        // Update Web Audio 3D listener position to follow camera
+        if (window.soundEngine && this.el.sceneEl.camera) {
+          window.soundEngine.updateListener(this.el.sceneEl.camera);
+        }
+      }
+    });
+  </script>
+</head>
+
+<body>
+  <!-- =====================================================================
+       2D HUD & Companion UI (Visible on screen and during desktop preview)
+       ===================================================================== -->
+  <div id="hud-container">
+    <!-- Top Bar -->
+    <header class="hud-top-bar hud-interactive">
+      <div class="hud-brand">
+        <h1>MÖLKKY VR</h1>
+        <span class="badge">WebXR ST2AWD</span>
+      </div>
+
+      <!-- Main Score Cluster -->
+      <div class="score-cluster">
+        <div class="score-main">
+          <div class="label">Score</div>
+          <div id="hud-score" class="value">0 / 50</div>
+        </div>
+
+        <div class="score-divider"></div>
+
+        <div class="score-stat">
+          <div class="label">Dernier lancer</div>
+          <div id="hud-last-points" class="value">+0</div>
+        </div>
+
+        <div class="score-divider"></div>
+
+        <div class="score-stat">
+          <div class="label">Lancers</div>
+          <div id="hud-throws" class="value">#0</div>
+        </div>
+
+        <div class="score-divider"></div>
+
+        <div class="score-stat">
+          <div class="label">Échecs</div>
+          <div id="hud-misses" class="value">0 / 3</div>
+        </div>
+      </div>
+
+      <!-- Timer & Difficulty -->
+      <div class="hud-meta">
+        <div class="timer-card">
+          <span>⏱</span>
+          <span id="hud-timer">00:00</span>
+        </div>
+        <button id="btn-diff-cycle" class="btn-glass" onclick="toggleDifficulty()">
+          <span>Niveau:</span>
+          <strong id="hud-difficulty" style="color: var(--accent-blue);">Normal</strong>
+        </button>
+      </div>
+    </header>
+
+    <!-- Feedback Banner -->
+    <div id="feedback-banner" class="feedback-banner">
+      Bienvenue dans le Mölkky VR !
+    </div>
+
+    <!-- Bottom Bar -->
+    <footer class="hud-bottom-bar hud-interactive">
+      <!-- Actions -->
+      <div class="hud-actions">
+        <button class="btn-glass btn-primary" onclick="window.molkkyGame.startNewGame()">
+          <span>🔄</span> Nouvelle Partie
+        </button>
+        <button class="btn-glass" onclick="window.molkkyGame.restartGame()">
+          Recommencer
+        </button>
+        <button class="btn-glass" onclick="window.vrControllerManager.executeSimulatedThrow(1.0, 0.0)">
+          <span>🎯</span> Lancer de test
+        </button>
+      </div>
+
+      <!-- VR Controls Notice -->
+      <div class="vr-tip">
+        <span>🥽 <strong>Casque VR :</strong> Utilisez le grip/gâchette pour attraper et lancer le Mölkky. Visez avec le laser.</span>
+      </div>
+
+      <!-- History Panel -->
+      <div class="history-panel">
+        <div class="history-header">Historique des lancers</div>
+        <ul id="history-list" class="history-list">
+          <li class="empty-history">Aucun lancer pour l'instant</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Game Over Modal (Victory / Defeat) -->
+  <div id="gameover-modal" class="modal-overlay">
+    <div class="modal-box">
+      <h2 id="gameover-title" class="modal-title">🏆 VICTOIRE !</h2>
+      <p id="gameover-desc" class="modal-desc">Félicitations, vous avez atteint exactement 50 points !</p>
+      <div id="gameover-stats" class="stats-grid">
+        <!-- Injected via JavaScript -->
+      </div>
+      <div class="modal-actions">
+        <button class="btn-glass btn-primary" onclick="window.molkkyGame.closeGameOverModal(); window.molkkyGame.startNewGame();">
+          Rejouer
+        </button>
+        <button class="btn-glass" onclick="window.molkkyGame.closeGameOverModal()">
+          Fermer
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       A-Frame 3D WebVR Scene
+       ===================================================================== -->
+  <a-scene
+    renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true;"
+    background="color: #87ceeb">
+
+    <!-- Scenic Sky with Summer Sun -->
+    <a-sky color="#7ec0ee"></a-sky>
+
+    <!-- Warm Outdoor Sunlight & Soft Ambient -->
+    <a-entity light="type: ambient; color: #ffffff; intensity: 0.65;"></a-entity>
+    <a-entity
+      light="type: directional; color: #fff9e6; intensity: 1.2; castShadow: true;"
+      position="5 10 4">
+    </a-entity>
+
+    <!-- Expansive Lawn Ground -->
+    <a-plane
+      id="ground-plane"
+      position="0 0 0"
+      rotation="-90 0 0"
+      width="60"
+      height="60"
+      material="color: #4f7d32; roughness: 0.9;">
+    </a-plane>
+
+    <!-- VR Player Camera Rig -->
+    <a-entity id="rig" position="0 0 0">
+      <!-- Head / Camera -->
+      <a-camera
+        id="camera"
+        position="0 1.65 0"
+        look-controls="pointerLockEnabled: false"
+        wasd-controls="acceleration: 15">
+        <!-- Mouse cursor for desktop raycasting on 3D buttons -->
+        <a-cursor
+          id="mouse-cursor"
+          raycaster="objects: .clickable; far: 15"
+          material="color: #fbbf24; shader: flat; opacity: 0.7;"
+          geometry="primitive: ring; radiusInner: 0.007; radiusOuter: 0.012">
+        </a-cursor>
+      </a-camera>
+
+      <!-- Left VR Controller (Oculus Touch / Vive / Generic WebXR) -->
+      <a-entity
+        id="left-controller"
+        oculus-touch-controls="hand: left"
+        laser-controls="hand: left"
+        raycaster="objects: .clickable; far: 15; lineColor: #38bdf8; lineOpacity: 0.7">
+      </a-entity>
+
+      <!-- Right VR Controller (Oculus Touch / Vive / Generic WebXR) -->
+      <a-entity
+        id="right-controller"
+        oculus-touch-controls="hand: right"
+        laser-controls="hand: right"
+        raycaster="objects: .clickable; far: 15; lineColor: #fbbf24; lineOpacity: 0.7">
+      </a-entity>
+    </a-entity>
+
+    <!-- Main Game Logic Component Attached to Scene -->
+    <a-entity molkky-manager></a-entity>
+  </a-scene>
+
+  <script>
+    function toggleDifficulty() {
+      if (!window.molkkyGame) return;
+      const levels = ['facile', 'normal', 'difficile'];
+      const currentIdx = levels.indexOf(window.molkkyGame.difficulty);
+      const nextLevel = levels[(currentIdx + 1) % levels.length];
+      window.molkkyGame.startNewGame(nextLevel);
+    }
+  </script>
+</body>
+</html>
