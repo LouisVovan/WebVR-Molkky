@@ -25,6 +25,14 @@ class VRControllerManager {
     // Three.js Line object for curved trajectory visualization in Easy mode
     this.trajectoryLine = null;
 
+    // VR Raycaster & UI Hover state
+    this.hoveredEls = { left: null, right: null };
+    this.prevTrigger = { left: false, right: false };
+    this.prevGrip = { left: false, right: false };
+    this.prevButtonA_X = { left: false, right: false };
+    this.lastActionTimestamp = 0;
+    this._threeRaycaster = null;
+
     this.init();
   }
 
@@ -56,8 +64,18 @@ class VRControllerManager {
   setupEventListeners() {
     const bindHand = (el, handName) => {
       if (!el) return;
-      ['triggerdown', 'gripdown', 'selectstart', 'squeezestart'].forEach(evt => {
-        el.addEventListener(evt, () => this.checkAndGrab(handName, 'trigger'));
+      ['triggerdown', 'selectstart'].forEach(evt => {
+        el.addEventListener(evt, () => {
+          const hovered = this.hoveredEls[handName];
+          if (hovered) {
+            this.handleElementClick(hovered, handName);
+          } else {
+            this.checkAndGrab(handName, 'trigger');
+          }
+        });
+      });
+      ['gripdown', 'squeezestart'].forEach(evt => {
+        el.addEventListener(evt, () => this.checkAndGrab(handName, 'grip'));
       });
       ['triggerup', 'gripup', 'selectend', 'squeezeend'].forEach(evt => {
         el.addEventListener(evt, () => this.onRelease(handName));
@@ -263,8 +281,165 @@ class VRControllerManager {
     return avgVel;
   }
 
+  resetToStand() {
+    this.heldByHand = null;
+    this.grabbedWithButton = null;
+    this.velocityHistory = [];
+    const leftBaton = document.getElementById('left-hand-baton');
+    const rightBaton = document.getElementById('right-hand-baton');
+    if (leftBaton) leftBaton.setAttribute('visible', 'false');
+    if (rightBaton) rightBaton.setAttribute('visible', 'false');
+    const baton = this.getBaton();
+    if (baton) baton.setAttribute('visible', 'true');
+    this.hideTrajectory();
+  }
+
+  getIntersectedClickable(hand) {
+    const rayEl = hand === 'left' ? document.getElementById('left-ray') : document.getElementById('right-ray');
+    if (!rayEl) return null;
+
+    // 1. Check A-Frame raycaster component
+    const rc = rayEl.components && rayEl.components.raycaster;
+    if (rc && rc.intersectedEls && rc.intersectedEls.length > 0) {
+      for (const el of rc.intersectedEls) {
+        if (!el) continue;
+        if (el.classList && el.classList.contains('clickable')) {
+          if (el.id === 'molkky-baton' && this.heldByHand) continue;
+          return el;
+        }
+        const parentClickable = el.closest && el.closest('.clickable');
+        if (parentClickable) {
+          if (parentClickable.id === 'molkky-baton' && this.heldByHand) continue;
+          return parentClickable;
+        }
+      }
+    }
+
+    // 2. Direct Three.js Raycaster fallback from rayEl world pose
+    if (rayEl.object3D) {
+      const origin = new THREE.Vector3();
+      const dir = new THREE.Vector3(0, 0, -1);
+      rayEl.object3D.getWorldPosition(origin);
+      const worldQuat = new THREE.Quaternion();
+      rayEl.object3D.getWorldQuaternion(worldQuat);
+      dir.applyQuaternion(worldQuat).normalize();
+
+      if (!this._threeRaycaster) {
+        this._threeRaycaster = new THREE.Raycaster();
+      }
+      this._threeRaycaster.set(origin, dir);
+      this._threeRaycaster.far = 12;
+
+      const clickableEls = Array.from(document.querySelectorAll('.clickable'));
+      const candidateMeshes = [];
+      const meshToEl = new Map();
+
+      for (const el of clickableEls) {
+        if (el.id === 'molkky-baton' && this.heldByHand) continue;
+        if (el.object3D) {
+          el.object3D.traverse((child) => {
+            if (child.isMesh) {
+              candidateMeshes.push(child);
+              meshToEl.set(child, el);
+            }
+          });
+        }
+      }
+
+      if (candidateMeshes.length > 0) {
+        const hits = this._threeRaycaster.intersectObjects(candidateMeshes, false);
+        if (hits.length > 0) {
+          return meshToEl.get(hits[0].object) || null;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  updateRayInteractions() {
+    const hands = ['left', 'right'];
+    for (const hand of hands) {
+      const closestEl = this.getIntersectedClickable(hand);
+      const prevHovered = this.hoveredEls[hand];
+
+      if (closestEl !== prevHovered) {
+        if (prevHovered) {
+          this.onElementUnhover(prevHovered, hand);
+        }
+        if (closestEl) {
+          this.onElementHover(closestEl, hand);
+        }
+        this.hoveredEls[hand] = closestEl;
+      }
+    }
+  }
+
+  onElementHover(el, hand) {
+    if (!el) return;
+    if (!el._origColor) {
+      el._origColor = el.getAttribute('color') || '#ffffff';
+    }
+
+    let hoverColor = '#fbbf24';
+    if (el.id === 'vr-btn-diff') hoverColor = '#60a5fa';
+    else if (el.id === 'vr-btn-grab') hoverColor = '#34d399';
+    else if (el.id === 'vr-btn-new') hoverColor = '#fde047';
+
+    el.setAttribute('color', hoverColor);
+    el.setAttribute('scale', '1.08 1.08 1.08');
+    this.triggerHaptic(hand, 0.25, 25);
+    el.emit('mouseenter', { hand, fromVR: true });
+  }
+
+  onElementUnhover(el, hand) {
+    if (!el) return;
+    if (el._origColor) {
+      el.setAttribute('color', el._origColor);
+    }
+    el.setAttribute('scale', '1 1 1');
+    el.emit('mouseleave', { hand, fromVR: true });
+  }
+
+  handleElementClick(el, hand) {
+    if (!el) return;
+    const now = performance.now();
+    if (now - this.lastActionTimestamp < 300) return;
+    this.lastActionTimestamp = now;
+
+    // Strong tactile haptic pulse
+    this.triggerHaptic(hand, 0.65, 70);
+
+    // Audio click / swoosh feedback
+    if (window.soundEngine) {
+      const pos = el.object3D ? el.object3D.position : { x: 1.2, y: 1.2, z: -0.9 };
+      window.soundEngine.playWhoosh(pos, 0.4);
+    }
+
+    // Visual button bounce
+    el.setAttribute('scale', '0.92 0.92 0.92');
+    setTimeout(() => {
+      if (this.hoveredEls[hand] === el) {
+        el.setAttribute('scale', '1.08 1.08 1.08');
+      } else {
+        el.setAttribute('scale', '1 1 1');
+      }
+    }, 120);
+
+    // Execute target action
+    if (el.id === 'molkky-baton' || el.id === 'vr-btn-grab') {
+      this.grabWithHand(hand, 'trigger');
+    } else if (typeof el.onButtonClick === 'function') {
+      el.onButtonClick();
+    } else {
+      el.emit('click', { hand, fromVR: true });
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }
+  }
+
   update(time, deltaTime) {
     try {
+      this.updateRayInteractions();
       this.updateWebXRGamepads(deltaTime);
 
       if (!this.heldByHand) {
@@ -334,7 +509,7 @@ class VRControllerManager {
       const buttonA_X = gp.buttons[4] && gp.buttons[4].pressed;
 
       // 1. LEFT THUMBSTICK: Smooth Locomotion following exact Camera Direction
-      // Inverted signs so forward pushes forward, right pushes right
+      // WebXR Gamepad API: Up stick is axisY < 0, Right stick is axisX > 0
       if (hand === 'left') {
         const deadzone = 0.12;
         if (Math.abs(axisX) > deadzone || Math.abs(axisY) > deadzone) {
@@ -346,10 +521,9 @@ class VRControllerManager {
           const right = new THREE.Vector3();
           right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
-          // Inverted signs for Meta Quest 3: forward stick moves forward, right stick moves right
           const moveDir = new THREE.Vector3();
-          moveDir.addScaledVector(forward, axisY);
-          moveDir.addScaledVector(right, -axisX);
+          moveDir.addScaledVector(forward, -axisY);
+          moveDir.addScaledVector(right, axisX);
           if (moveDir.lengthSq() > 0.001) {
             moveDir.normalize();
           }
@@ -372,13 +546,39 @@ class VRControllerManager {
         }
       }
 
-      // 3. GRAB & RELEASE VIA GAMEPAD
-      if (!this.heldByHand) {
-        if (triggerVal > 0.45 || gripVal > 0.45 || buttonA_X) {
-          const btn = triggerVal > 0.45 ? 'trigger' : 'grip';
-          this.checkAndGrab(hand, btn);
+      // 3. BUTTON EDGE DETECTION
+      const triggerPressed = triggerVal > 0.45;
+      const gripPressed = gripVal > 0.45;
+      const aPressed = !!buttonA_X;
+
+      const triggerJustPressed = triggerPressed && !this.prevTrigger[hand];
+      const gripJustPressed = gripPressed && !this.prevGrip[hand];
+      const aJustPressed = aPressed && !this.prevButtonA_X[hand];
+
+      this.prevTrigger[hand] = triggerPressed;
+      this.prevGrip[hand] = gripPressed;
+      this.prevButtonA_X[hand] = aPressed;
+
+      // 4. VR LASER INTERACTION & BUTTON CLICKING VS BATON GRAB
+      if (this.heldByHand !== hand) {
+        const hovered = this.hoveredEls[hand];
+
+        // Did user pull trigger or press A/X while aiming laser at a 3D clickable button?
+        if ((triggerJustPressed || aJustPressed) && hovered) {
+          this.handleElementClick(hovered, hand);
+          continue; // Consumed! Skip grabbing!
+        }
+
+        // Baton grab (only if not already holding with other hand)
+        if (!this.heldByHand) {
+          if (gripJustPressed) {
+            this.checkAndGrab(hand, 'grip');
+          } else if (triggerJustPressed && !hovered) {
+            this.checkAndGrab(hand, 'trigger');
+          }
         }
       } else if (this.heldByHand === hand) {
+        // Holding baton with THIS hand: check release to throw
         const triggerReleased = triggerVal < 0.25;
         const gripReleased = gripVal < 0.25;
 
@@ -454,7 +654,7 @@ class VRControllerManager {
     let startX = 0;
 
     window.addEventListener('mousedown', (e) => {
-      if (e.target.closest('#hud-container') || e.target.closest('.modal-overlay')) return;
+      if (e.target.closest && (e.target.closest('#hud-container') || e.target.closest('.modal-overlay') || e.target.closest('#vr-totem') || e.target.closest('.clickable'))) return;
       if (!window.molkkyGame || window.molkkyGame.state !== 'READY') return;
 
       isAiming = true;

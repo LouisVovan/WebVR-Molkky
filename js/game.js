@@ -120,6 +120,9 @@ class MolkkyGame {
       window.molkkyPhysics.resetAllPinsToInitial(config.distance);
       window.molkkyPhysics.resetBatonToStand();
     }
+    if (window.vrControllerManager) {
+      window.vrControllerManager.resetToStand();
+    }
 
     this.showFeedback('Partie démarrée ! Visez les 50 points.', 'info');
     this.updateUI();
@@ -399,12 +402,14 @@ class MolkkyGame {
     const vrLast = document.getElementById('vr-last-text');
     const vrMisses = document.getElementById('vr-misses-text');
     const vrDiff = document.getElementById('vr-diff-text');
+    const vrBtnDiff = document.getElementById('vr-btn-diff-text');
 
     if (vrScore) vrScore.setAttribute('value', `SCORE: ${this.score} / 50`);
     if (vrThrows) vrThrows.setAttribute('value', `Lancers: ${this.throwCount}`);
     if (vrLast) vrLast.setAttribute('value', `Dernier lancer: +${this.lastPoints} pts`);
     if (vrMisses) vrMisses.setAttribute('value', `Échecs: ${this.consecutiveMisses} / 3`);
     if (vrDiff) vrDiff.setAttribute('value', `Difficulté: ${this.difficultyConfigs[this.difficulty].label}`);
+    if (vrBtnDiff) vrBtnDiff.setAttribute('value', `Niveau : ${this.difficultyConfigs[this.difficulty].label}`);
   }
 }
 

@@ -264,11 +264,11 @@
       buildScoreTotem: function () {
         const sceneEl = this.el.sceneEl;
 
-        // Wooden Totem Standing to the Right of the Player
+        // Wooden Totem Standing to the Right of the Player, angled directly towards (0,0,0)
         const totem = document.createElement('a-entity');
         totem.setAttribute('id', 'vr-totem');
-        totem.setAttribute('position', '1.35 0 -0.5');
-        totem.setAttribute('rotation', '0 -35 0');
+        totem.setAttribute('position', '1.2 0 -0.85');
+        totem.setAttribute('rotation', '0 -52 0');
 
         // Main Totem Post
         const post = document.createElement('a-box');
@@ -282,8 +282,8 @@
         // Scoreboard Backing Plaque
         const plaque = document.createElement('a-box');
         plaque.setAttribute('position', '0 1.55 0.06');
-        plaque.setAttribute('width', '0.9');
-        plaque.setAttribute('height', '1.1');
+        plaque.setAttribute('width', '0.96');
+        plaque.setAttribute('height', '1.16');
         plaque.setAttribute('depth', '0.04');
         plaque.setAttribute('color', '#1e293b');
         totem.appendChild(plaque);
@@ -291,8 +291,8 @@
         // Plaque Wooden/Gold Frame Border
         const frame = document.createElement('a-box');
         frame.setAttribute('position', '0 1.55 0.04');
-        frame.setAttribute('width', '0.96');
-        frame.setAttribute('height', '1.16');
+        frame.setAttribute('width', '1.02');
+        frame.setAttribute('height', '1.22');
         frame.setAttribute('depth', '0.03');
         frame.setAttribute('color', '#d4af37');
         totem.appendChild(frame);
@@ -302,8 +302,8 @@
         title.setAttribute('value', 'MÖLKKY VR');
         title.setAttribute('align', 'center');
         title.setAttribute('color', '#fbbf24');
-        title.setAttribute('position', '0 1.95 0.09');
-        title.setAttribute('width', '2.4');
+        title.setAttribute('position', '0 1.96 0.10');
+        title.setAttribute('width', '2.5');
         totem.appendChild(title);
 
         const scoreText = document.createElement('a-text');
@@ -311,8 +311,8 @@
         scoreText.setAttribute('value', 'SCORE: 0 / 50');
         scoreText.setAttribute('align', 'center');
         scoreText.setAttribute('color', '#ffffff');
-        scoreText.setAttribute('position', '0 1.8 0.09');
-        scoreText.setAttribute('width', '2.8');
+        scoreText.setAttribute('position', '0 1.81 0.10');
+        scoreText.setAttribute('width', '3.0');
         totem.appendChild(scoreText);
 
         const lastText = document.createElement('a-text');
@@ -320,8 +320,8 @@
         lastText.setAttribute('value', 'Dernier lancer: +0 pts');
         lastText.setAttribute('align', 'center');
         lastText.setAttribute('color', '#34d399');
-        lastText.setAttribute('position', '0 1.67 0.09');
-        lastText.setAttribute('width', '2.1');
+        lastText.setAttribute('position', '0 1.68 0.10');
+        lastText.setAttribute('width', '2.2');
         totem.appendChild(lastText);
 
         const throwsText = document.createElement('a-text');
@@ -329,8 +329,8 @@
         throwsText.setAttribute('value', 'Lancers: 0');
         throwsText.setAttribute('align', 'center');
         throwsText.setAttribute('color', '#94a3b8');
-        throwsText.setAttribute('position', '-0.2 1.55 0.09');
-        throwsText.setAttribute('width', '1.9');
+        throwsText.setAttribute('position', '-0.22 1.55 0.10');
+        throwsText.setAttribute('width', '2.0');
         totem.appendChild(throwsText);
 
         const missesText = document.createElement('a-text');
@@ -338,8 +338,8 @@
         missesText.setAttribute('value', 'Échecs: 0 / 3');
         missesText.setAttribute('align', 'center');
         missesText.setAttribute('color', '#f87171');
-        missesText.setAttribute('position', '0.2 1.55 0.09');
-        missesText.setAttribute('width', '1.9');
+        missesText.setAttribute('position', '0.22 1.55 0.10');
+        missesText.setAttribute('width', '2.0');
         totem.appendChild(missesText);
 
         const diffText = document.createElement('a-text');
@@ -347,8 +347,8 @@
         diffText.setAttribute('value', 'Difficulté: Normal');
         diffText.setAttribute('align', 'center');
         diffText.setAttribute('color', '#60a5fa');
-        diffText.setAttribute('position', '0 1.44 0.09');
-        diffText.setAttribute('width', '1.8');
+        diffText.setAttribute('position', '0 1.44 0.10');
+        diffText.setAttribute('width', '1.9');
         totem.appendChild(diffText);
 
         const timerText = document.createElement('a-text');
@@ -356,8 +356,8 @@
         timerText.setAttribute('value', 'Temps: 00:00');
         timerText.setAttribute('align', 'center');
         timerText.setAttribute('color', '#cbd5e1');
-        timerText.setAttribute('position', '0 1.35 0.09');
-        timerText.setAttribute('width', '1.8');
+        timerText.setAttribute('position', '0 1.34 0.10');
+        timerText.setAttribute('width', '1.9');
         totem.appendChild(timerText);
 
         const feedbackText = document.createElement('a-text');
@@ -365,83 +365,100 @@
         feedbackText.setAttribute('value', 'Prêt à jouer');
         feedbackText.setAttribute('align', 'center');
         feedbackText.setAttribute('color', '#fef08a');
-        feedbackText.setAttribute('position', '0 1.25 0.09');
-        feedbackText.setAttribute('width', '1.7');
+        feedbackText.setAttribute('position', '0 1.24 0.10');
+        feedbackText.setAttribute('width', '1.8');
         totem.appendChild(feedbackText);
 
         // 3D Clickable Buttons for VR Laser
-        // Button 1: Nouvelle Partie
+        // Button 1: Recommencer / Nouvelle Partie
         const btnNew = document.createElement('a-box');
+        btnNew.setAttribute('id', 'vr-btn-new');
         btnNew.setAttribute('class', 'clickable');
-        btnNew.setAttribute('position', '-0.26 1.12 0.09');
-        btnNew.setAttribute('width', '0.26');
-        btnNew.setAttribute('height', '0.09');
-        btnNew.setAttribute('depth', '0.02');
+        btnNew.setAttribute('position', '-0.29 1.10 0.10');
+        btnNew.setAttribute('width', '0.27');
+        btnNew.setAttribute('height', '0.11');
+        btnNew.setAttribute('depth', '0.03');
         btnNew.setAttribute('color', '#f59e0b');
+        btnNew.setAttribute('material', 'roughness: 0.4');
+
         const btnNewTxt = document.createElement('a-text');
-        btnNewTxt.setAttribute('value', 'Nouvelle');
+        btnNewTxt.setAttribute('id', 'vr-btn-new-text');
+        btnNewTxt.setAttribute('value', 'Recommencer');
         btnNewTxt.setAttribute('align', 'center');
         btnNewTxt.setAttribute('color', '#0f172a');
-        btnNewTxt.setAttribute('position', '0 0 0.02');
+        btnNewTxt.setAttribute('position', '0 0 0.025');
         btnNewTxt.setAttribute('width', '1.5');
         btnNew.appendChild(btnNewTxt);
 
+        btnNew.onButtonClick = () => {
+          if (window.molkkyGame) window.molkkyGame.startNewGame();
+        };
         btnNew.addEventListener('mouseenter', () => btnNew.setAttribute('color', '#fbbf24'));
         btnNew.addEventListener('mouseleave', () => btnNew.setAttribute('color', '#f59e0b'));
-        btnNew.addEventListener('click', () => {
-          if (window.molkkyGame) window.molkkyGame.startNewGame();
-        });
+        btnNew.addEventListener('click', () => btnNew.onButtonClick());
         totem.appendChild(btnNew);
 
-        // Button 2: Difficulté
+        // Button 2: Difficulté (Facile -> Normal -> Difficile)
         const btnDiff = document.createElement('a-box');
+        btnDiff.setAttribute('id', 'vr-btn-diff');
         btnDiff.setAttribute('class', 'clickable');
-        btnDiff.setAttribute('position', '0 1.12 0.09');
-        btnDiff.setAttribute('width', '0.24');
-        btnDiff.setAttribute('height', '0.09');
-        btnDiff.setAttribute('depth', '0.02');
+        btnDiff.setAttribute('position', '0 1.10 0.10');
+        btnDiff.setAttribute('width', '0.27');
+        btnDiff.setAttribute('height', '0.11');
+        btnDiff.setAttribute('depth', '0.03');
         btnDiff.setAttribute('color', '#3b82f6');
+        btnDiff.setAttribute('material', 'roughness: 0.4');
+
         const btnDiffTxt = document.createElement('a-text');
-        btnDiffTxt.setAttribute('value', 'Niveau');
+        btnDiffTxt.setAttribute('id', 'vr-btn-diff-text');
+        btnDiffTxt.setAttribute('value', 'Niveau : Normal');
         btnDiffTxt.setAttribute('align', 'center');
         btnDiffTxt.setAttribute('color', '#ffffff');
-        btnDiffTxt.setAttribute('position', '0 0 0.02');
+        btnDiffTxt.setAttribute('position', '0 0 0.025');
         btnDiffTxt.setAttribute('width', '1.5');
         btnDiff.appendChild(btnDiffTxt);
 
+        btnDiff.onButtonClick = () => {
+          if (window.molkkyGame) {
+            const levels = ['facile', 'normal', 'difficile'];
+            const currentIdx = levels.indexOf(window.molkkyGame.difficulty);
+            const nextLevel = levels[(currentIdx + 1) % levels.length];
+            window.molkkyGame.startNewGame(nextLevel);
+          }
+        };
         btnDiff.addEventListener('mouseenter', () => btnDiff.setAttribute('color', '#60a5fa'));
         btnDiff.addEventListener('mouseleave', () => btnDiff.setAttribute('color', '#3b82f6'));
-        btnDiff.addEventListener('click', () => {
-          if (window.molkkyGame) {
-            const next = window.molkkyGame.difficulty === 'facile' ? 'normal' : (window.molkkyGame.difficulty === 'normal' ? 'difficile' : 'facile');
-            window.molkkyGame.startNewGame(next);
-          }
-        });
+        btnDiff.addEventListener('click', () => btnDiff.onButtonClick());
         totem.appendChild(btnDiff);
 
         // Button 3: Prendre / Rappeler le Bâton
         const btnGrab = document.createElement('a-box');
+        btnGrab.setAttribute('id', 'vr-btn-grab');
         btnGrab.setAttribute('class', 'clickable');
-        btnGrab.setAttribute('position', '0.26 1.12 0.09');
-        btnGrab.setAttribute('width', '0.24');
-        btnGrab.setAttribute('height', '0.09');
-        btnGrab.setAttribute('depth', '0.02');
+        btnGrab.setAttribute('position', '0.29 1.10 0.10');
+        btnGrab.setAttribute('width', '0.27');
+        btnGrab.setAttribute('height', '0.11');
+        btnGrab.setAttribute('depth', '0.03');
         btnGrab.setAttribute('color', '#10b981');
+        btnGrab.setAttribute('material', 'roughness: 0.4');
+
         const btnGrabTxt = document.createElement('a-text');
+        btnGrabTxt.setAttribute('id', 'vr-btn-grab-text');
         btnGrabTxt.setAttribute('value', 'Bâton');
         btnGrabTxt.setAttribute('align', 'center');
         btnGrabTxt.setAttribute('color', '#0f172a');
-        btnGrabTxt.setAttribute('position', '0 0 0.02');
+        btnGrabTxt.setAttribute('position', '0 0 0.025');
         btnGrabTxt.setAttribute('width', '1.5');
         btnGrab.appendChild(btnGrabTxt);
 
-        btnGrab.addEventListener('mouseenter', () => btnGrab.setAttribute('color', '#34d399'));
-        btnGrab.addEventListener('mouseleave', () => btnGrab.setAttribute('color', '#10b981'));
-        btnGrab.addEventListener('click', () => {
+        btnGrab.onButtonClick = () => {
           if (window.vrControllerManager) {
             window.vrControllerManager.grabWithHand('right', 'trigger');
           }
-        });
+        };
+        btnGrab.addEventListener('mouseenter', () => btnGrab.setAttribute('color', '#34d399'));
+        btnGrab.addEventListener('mouseleave', () => btnGrab.setAttribute('color', '#10b981'));
+        btnGrab.addEventListener('click', () => btnGrab.onButtonClick());
         totem.appendChild(btnGrab);
 
         sceneEl.appendChild(totem);
@@ -616,6 +633,7 @@
         <a-entity id="left-ray"
           position="0 -0.01 0.05"
           rotation="-35 0 0"
+          cursor="rayOrigin: entity; fuse: false;"
           raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #38bdf8"
           line="color: #38bdf8; opacity: 0.6">
         </a-entity>
@@ -637,6 +655,7 @@
         <a-entity id="right-ray"
           position="0 -0.01 0.05"
           rotation="-35 0 0"
+          cursor="rayOrigin: entity; fuse: false;"
           raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #fbbf24"
           line="color: #fbbf24; opacity: 0.6">
         </a-entity>
