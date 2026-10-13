@@ -156,5 +156,127 @@ class MolkkyPhysics {
     });
   }
 
+  /**
+   * Disposition officielle en ruche d'abeille (compacte) des 12 quilles
+   * Détails de disposition et géométrie :
+   * - Les quilles sont ordonnées selon les règles internationales du Mölkky :
+   *   Rangée 1 (devant) : 1, 2
+   *   Rangée 2 : 3, 10, 4
+   *   Rangée 3 (cœur)   : 5, 11, 12, 6  (les gros scores sont protégés au centre)
+   *   Rangée 4 (fond)   : 7, 9, 8
+   * - Géométrie hexagonale : L'écartement entre rangées vaut d * cos(30°) = d * 0.866.
+   * - targetCenterZ : Recule ou avance le paquet selon la difficulté (-2.5m, -3.5m, -4.8m).
+   */
+  getMolkkyLayout(targetCenterZ = -3.5) {
+    const d = this.PIN_RADIUS * 2.15;
+    const rowOffset = d * 0.866;
+
+    return [
+      { num: 1,  x: -d * 0.5, z: targetCenterZ },
+      { num: 2,  x:  d * 0.5, z: targetCenterZ },
+
+      { num: 3,  x: -d,       z: targetCenterZ - rowOffset },
+      { num: 10, x:  0,       z: targetCenterZ - rowOffset },
+      { num: 4,  x:  d,       z: targetCenterZ - rowOffset },
+
+      { num: 5,  x: -d * 1.5, z: targetCenterZ - rowOffset * 2 },
+      { num: 11, x: -d * 0.5, z: targetCenterZ - rowOffset * 2 },
+      { num: 12, x:  d * 0.5, z: targetCenterZ - rowOffset * 2 },
+      { num: 6,  x:  d * 1.5, z: targetCenterZ - rowOffset * 2 },
+
+      { num: 7,  x: -d,       z: targetCenterZ - rowOffset * 3 },
+      { num: 9,  x:  0,       z: targetCenterZ - rowOffset * 3 },
+      { num: 8,  x:  d,       z: targetCenterZ - rowOffset * 3 }
+    ];
+  }
+
+  /**
+   * Instancie les 12 corps rigides Cannon.js et les connecte à leurs meshes Three.js
+   */
+  setupPins(pinMeshesByNumber, targetCenterZ = -3.5) {
+    this.pins.forEach(p => this.world.removeBody(p.body));
+    this.pins = [];
+
+    const layout = this.getMolkkyLayout(targetCenterZ);
+
+    layout.forEach((item, index) => {
+      const mesh = pinMeshesByNumber[item.num];
+      const pinShape = this.createCylinderShape(this.PIN_RADIUS, this.PIN_HEIGHT, 12);
+
+      const body = new CANNON.Body({
+        mass: this.PIN_MASS,
+        material: this.woodMaterial,
+        linearDamping: 0.12,
+        angularDamping: 0.15,
+        sleepSpeedLimit: 0.05,
+        sleepTimeLimit: 0.5
+      });
+
+      const qRot = new CANNON.Quaternion();
+      qRot.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / 2);
+      body.addShape(pinShape, new CANNON.Vec3(0, 0, 0), qRot);
+
+      const initY = this.PIN_HEIGHT / 2 + 0.002;
+      body.position.set(item.x, initY, item.z);
+      this.world.addBody(body);
+
+      body.addEventListener('collide', (e) => {
+        try {
+          let speed = 1.0;
+          if (e.contact && typeof e.contact.getImpactVelocityAlongNormal === 'function') {
+            speed = Math.abs(e.contact.getImpactVelocityAlongNormal());
+          }
+          if (speed > 0.75 && window.soundEngine) {
+            const pos = { x: body.position.x, y: body.position.y, z: body.position.z };
+            if (e.body === this.groundBody) {
+              window.soundEngine.playGrassImpact(pos, speed * 0.8);
+            } else {
+              window.soundEngine.playWoodImpact(pos, speed);
+            }
+          }
+        } catch (err) {}
+      });
+
+      this.pins.push({
+        id: index,
+        number: item.num,
+        body: body,
+        mesh: mesh,
+        initialPos: { x: item.x, y: initY, z: item.z },
+        fallen: false
+      });
+    });
+
+    this.syncMeshes();
+  }
+
+  resetAllPinsToInitial(targetCenterZ = -3.5) {
+    const layout = this.getMolkkyLayout(targetCenterZ);
+
+    layout.forEach(item => {
+      const pin = this.pins.find(p => p.number === item.num);
+      if (pin) {
+        pin.initialPos = { x: item.x, y: this.PIN_HEIGHT / 2 + 0.002, z: item.z };
+        pin.fallen = false;
+
+        pin.body.wakeUp();
+        pin.body.position.set(item.x, this.PIN_HEIGHT / 2 + 0.002, item.z);
+        pin.body.quaternion.set(0, 0, 0, 1);
+        pin.body.velocity.set(0, 0, 0);
+        pin.body.angularVelocity.set(0, 0, 0);
+        pin.body.sleep();
+      }
+    });
+
+    this.syncMeshes();
+  }
+
+  launchBaton(worldPos, linVel, angVel) {
+    if (!this.batonBody) return;
+
+    // Safety checks against NaN
+    const px = isFinite(worldPos.x) ? worldPos.x : 0;
+    const py = isFinite(worldPos.y) ? worldPos.y : 1.1;
+    const pz = isFinite(worldPos.z) ? worldPos.z : -0.3;
 
 }
