@@ -248,5 +248,225 @@ class VRControllerManager {
     const throwVel = this.calculateReleaseVelocity();
 
     // Torsion et rotation naturelle du bâton de bois en plein vol
+    const speed = throwVel.length();
+    const angVel = new THREE.Vector3(-speed * 2.8, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.5);
+
+    if (speed > 0.1) {
+      releasePos.add(throwVel.clone().normalize().multiplyScalar(0.10));
+    }
+
+    this.triggerHaptic(hand, 0.9, 130);
+
+    // Lancement dans le moteur physique Cannon.js
+    if (window.molkkyPhysics) {
+      window.molkkyPhysics.launchBaton(releasePos, throwVel, angVel);
+    }
+    if (window.soundEngine) {
+      window.soundEngine.playThrow(releasePos, speed);
+    }
+
+    window.molkkyGame.onThrowLaunched();
+  }
+
+  /**
+   * Synthétise la vitesse de lancer en combinant vitesse de pointe et moyenne de fin de geste
+   * Principe ergonomique et physique du lancer VR :
+   * 1. Échantillonnage temporel : Récupère les vecteurs vitesses des 220 dernières millisecondes.
+   * 2. Moyenne pondérée dans le temps : Les frames les plus récentes reçoivent un poids plus fort.
+   * 3. Compensation du relâchement des doigts : Un joueur de VR ralentit inconsciemment son bras
+   *    au moment précis où il ouvre les doigts pour lâcher la gâchette.
+   *    -> Pour compenser ce biais physiologique, on mélange 65% de la vitesse de pointe maximale
+   *       enregistrée pendant l'élan + 35% de la vitesse moyenne.
+   * 4. Portance balistique : Ajout d'une composante verticale (+Y) pour former une belle parabole.
+   * 5. Aide à la visée douce (20% regard) : Aligne subtilement la direction du lancer avec l'orientation
+   *    de la tête pour éviter les lancers aberrants vers l'arrière ou les murs réels de la pièce.
+   */
+  calculateReleaseVelocity() {
+    const targetZ = window.molkkyGame?.difficultyConfigs[window.molkkyGame.difficulty]?.distance || -3.5;
+    const dist = Math.abs(targetZ);
+    const now = performance.now();
+
+    // Filtre les échantillons des 220 dernières millisecondes
+    const samples = this.velocityHistory.filter(s => (now - s.time) < 220);
+    if (samples.length === 0) {
+      return new THREE.Vector3(0, 1.8, -dist * 1.45);
+    }
+
+    let maxSpeed = 0;
+    let peakVel = null;
+    const avgVel = new THREE.Vector3();
+    let totalWeight = 0;
+
+    // Calcul de la moyenne pondérée dans le temps
+    samples.forEach((s, i) => {
+      if (!isFinite(s.vel.length())) return;
+      const spd = s.vel.length();
+      if (spd > maxSpeed) {
+        maxSpeed = spd;
+        peakVel = s.vel.clone();
+      }
+      const weight = i + 1;
+      avgVel.addScaledVector(s.vel, weight);
+      totalWeight += weight;
+    });
+
+    if (totalWeight > 0) avgVel.divideScalar(totalWeight);
+
+    // Mélange 65% pointe + 35% moyenne
+    const finalVel = new THREE.Vector3();
+    if (peakVel && maxSpeed > 0.8) {
+      finalVel.addScaledVector(peakVel, 0.65).addScaledVector(avgVel, 0.35);
+    } else {
+      finalVel.copy(avgVel);
+    }
+
+    // Multiplicateur pour un lancer dynamique et sans fatigue musculaire excessive
+    finalVel.multiplyScalar(2.2);
+
+    // Portance parabolique (+Y) pour un arc balistique gracieux
+    const currentSpeed = finalVel.length();
+    if (currentSpeed > 0.4) finalVel.y += 0.45 * Math.min(currentSpeed, 4.0);
+
+    // Force la propulsion vers l'avant (-Z)
+    if (finalVel.z > 0.2) finalVel.z = -Math.abs(finalVel.z);
+
+    // Assistance d'alignement avec la direction du regard (20%)
+    const camera = document.getElementById('camera');
+    if (camera?.object3D) {
+      const camDir = new THREE.Vector3();
+      camera.object3D.getWorldDirection(camDir);
+      camDir.y = 0;
+      camDir.normalize();
+      if (finalVel.clone().normalize().dot(camDir) > 0.15) {
+        const hMag = Math.hypot(finalVel.x, finalVel.z);
+        const blended = new THREE.Vector3(finalVel.x, 0, finalVel.z)
+          .normalize().multiplyScalar(0.8)
+          .addScaledVector(camDir, 0.2)
+          .normalize().multiplyScalar(hMag);
+        finalVel.x = blended.x;
+        finalVel.z = blended.z;
+      }
+    }
+
+    // Sécurités de vitesse min et max
+    if (!isFinite(finalVel.length()) || finalVel.length() < 1.8) {
+      finalVel.set(0, 1.8, -dist * 1.45);
+    }
+    if (finalVel.length() > 22) finalVel.normalize().multiplyScalar(22);
+
+    return finalVel;
+  }
+
+  resetToStand() {
+    this.heldByHand = null;
+    this.grabbedWithButton = null;
+    this.velocityHistory = [];
+    const baton = this.getBaton();
+    if (baton) baton.setAttribute('visible', 'true');
+    this.hideTrajectory();
+  }
+
+  /* =========================================================================
+   * 3. INTERACTIONS LASER & CLIC SUR LES BOUTONS (BOUTONS A ET X)
+   * ========================================================================= */
+
+  /**
+   * Trouve le bouton .clickable le plus proche d'un rayon dans l'espace 3D
+   */
+  findClickableNearRay(origin, dir, maxPerpDist = 0.85, minForwardDist = 0.3) {
+    const ray = new THREE.Ray(origin, dir);
+    const clickables = Array.from(document.querySelectorAll('.clickable'));
+    let bestEl = null;
+    let minPerp = maxPerpDist;
+
+    for (const el of clickables) {
+      if (el.id === 'molkky-baton' || !el.object3D) continue;
+      // Ignore les éléments dans une bannière masquée
+      const hiddenParent = el.closest('[visible="false"]');
+      if (hiddenParent) continue;
+
+      const pos = new THREE.Vector3();
+      el.object3D.getWorldPosition(pos);
+
+      const toBtn = pos.clone().sub(origin);
+      if (toBtn.dot(dir) > minForwardDist) {
+        const perpDist = ray.distanceToPoint(pos);
+        if (perpDist < minPerp) {
+          minPerp = perpDist;
+          bestEl = el;
+        }
+      }
+    }
+    return bestEl;
+  }
+
+  /**
+   * Raycast direct depuis la manette pour détecter les boutons survolés
+   */
+  getIntersectedClickable(hand) {
+    const rayEl = hand === 'left' ? this.leftRayEl : this.rightRayEl;
+    const ctrlEl = hand === 'left' ? this.leftHandEl : this.rightHandEl;
+    if (!rayEl) return null;
+
+    // 1. Vérification des raycasters A-Frame (laser et manette)
+    for (const el of [rayEl, ctrlEl]) {
+      const rc = el?.components?.raycaster;
+      if (rc?.intersectedEls?.length > 0) {
+        for (const hit of rc.intersectedEls) {
+          if (!hit || hit.id === 'molkky-baton') continue;
+          const clickable = hit.classList.contains('clickable') ? hit : hit.closest('.clickable');
+          if (clickable && clickable.id !== 'molkky-baton') return clickable;
+        }
+      }
+    }
+
+    // 2. Raycast direct Three.js
+    if (rayEl.object3D) {
+      rayEl.object3D.updateMatrixWorld(true);
+      const origin = new THREE.Vector3();
+      const dir = new THREE.Vector3(0, 0, -1);
+      rayEl.object3D.getWorldPosition(origin);
+      const quat = new THREE.Quaternion();
+      rayEl.object3D.getWorldQuaternion(quat);
+      dir.applyQuaternion(quat).normalize();
+
+      const threeRc = new THREE.Raycaster(origin, dir, 0.1, 12);
+      const candidateMeshes = [];
+      const meshToEl = new Map();
+
+      document.querySelectorAll('.clickable').forEach(el => {
+        if (el.id === 'molkky-baton' || !el.object3D) return;
+        el.object3D.traverse(child => {
+          if (child.isMesh) {
+            candidateMeshes.push(child);
+            meshToEl.set(child, el);
+          }
+        });
+      });
+
+      const hits = threeRc.intersectObjects(candidateMeshes, false);
+      if (hits.length > 0) {
+        return meshToEl.get(hits[0].object) || null;
+      }
+    }
+
+    return null;
+  }
+
+  getTargetFromHand(hand) {
+    const rayEl = hand === 'left' ? this.leftRayEl : this.rightRayEl;
+    if (!rayEl?.object3D) return null;
+
+    rayEl.object3D.updateMatrixWorld(true);
+    const origin = new THREE.Vector3();
+    const dir = new THREE.Vector3(0, 0, -1);
+    rayEl.object3D.getWorldPosition(origin);
+    const quat = new THREE.Quaternion();
+    rayEl.object3D.getWorldQuaternion(quat);
+    dir.applyQuaternion(quat).normalize();
+
+    return this.findClickableNearRay(origin, dir, 0.85, 0.3);
+  }
+
 
 }
