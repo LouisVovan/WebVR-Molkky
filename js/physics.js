@@ -279,4 +279,144 @@ class MolkkyPhysics {
     const py = isFinite(worldPos.y) ? worldPos.y : 1.1;
     const pz = isFinite(worldPos.z) ? worldPos.z : -0.3;
 
+    const vx = isFinite(linVel.x) ? linVel.x : 0;
+    const vy = isFinite(linVel.y) ? linVel.y : 1.5;
+    const vz = isFinite(linVel.z) ? linVel.z : -4.5;
+
+    const wx = isFinite(angVel.x) ? angVel.x : 0;
+    const wy = isFinite(angVel.y) ? angVel.y : -4;
+    const wz = isFinite(angVel.z) ? angVel.z : 0;
+
+    this.batonBody.type = CANNON.Body.DYNAMIC;
+    this.batonBody.wakeUp();
+    this.batonBody.position.set(px, py, pz);
+    this.batonBody.velocity.set(vx, vy, vz);
+    this.batonBody.angularVelocity.set(wx, wy, wz);
+
+    this.pins.forEach(p => p.body.wakeUp());
+
+    this.roundInProgress = true;
+    this.isSettling = true;
+    this.settleTimer = 0;
+  }
+
+  holdBaton(worldPos, worldQuat) {
+    if (!this.batonBody) return;
+    const px = isFinite(worldPos.x) ? worldPos.x : 0.35;
+    const py = isFinite(worldPos.y) ? worldPos.y : 0.95;
+    const pz = isFinite(worldPos.z) ? worldPos.z : -0.25;
+
+    this.batonBody.type = CANNON.Body.KINEMATIC;
+    this.batonBody.position.set(px, py, pz);
+    if (worldQuat && isFinite(worldQuat.x)) {
+      this.batonBody.quaternion.set(worldQuat.x, worldQuat.y, worldQuat.z, worldQuat.w);
+    }
+    this.batonBody.velocity.set(0, 0, 0);
+    this.batonBody.angularVelocity.set(0, 0, 0);
+
+    // Immediately sync visual mesh to controller hand with zero frame lag
+    if (this.batonMesh) {
+      this.batonMesh.position.set(px, py, pz);
+      if (worldQuat && isFinite(worldQuat.x)) {
+        this.batonMesh.quaternion.set(worldQuat.x, worldQuat.y, worldQuat.z, worldQuat.w);
+      }
+    }
+  }
+
+  resetBatonToStand(standPos = { x: 0.35, y: 0.95, z: -0.25 }) {
+    if (!this.batonBody) return;
+    const scene = document.querySelector('a-scene');
+    if (this.batonMesh && scene && scene.object3D && this.batonMesh.parent !== scene.object3D) {
+      scene.object3D.add(this.batonMesh);
+    }
+    this.batonBody.type = CANNON.Body.KINEMATIC;
+    this.batonBody.position.set(standPos.x, standPos.y, standPos.z);
+    const q = new CANNON.Quaternion();
+    q.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), Math.PI / 2);
+    this.batonBody.quaternion.copy(q);
+    this.batonBody.velocity.set(0, 0, 0);
+    this.batonBody.angularVelocity.set(0, 0, 0);
+    this.syncMeshes();
+
+    // Ensure baton entity is visible
+    if (window.vrControllerManager) {
+      const baton = window.vrControllerManager.getBaton();
+      if (baton) baton.setAttribute('visible', 'true');
+    }
+  }
+
+  /**
+   * Détection mathématique des quilles tombées (Quaternions & Orientation 3D)
+   * Principe mathématique et physique :
+   * - Une quille debout a son axe local 'up' orienté vers (0, 1, 0).
+   * - Quand la quille tourne dans l'espace, sa rotation est décrite par un quaternion q.
+   * - On applique cette rotation au vecteur unitaire vertical : worldUp = q * (0, 1, 0).
+   * - La composante worldUp.y représente le cosinus de l'angle d'inclinaison par rapport à la verticale :
+   *   * Si worldUp.y = 1.0 -> Quille parfaitement debout (0° d'inclinaison)
+   *   * Si worldUp.y = 0.0 -> Quille couchée à l'horizontale (90° d'inclinaison)
+   *   * Si worldUp.y < 0.72 -> Quille inclinée à plus de 44° (ou appuyée contre une autre) -> DÉCLARÉE TOMBÉE.
+   * - On vérifie aussi l'affaissement vertical (body.position.y < H * 0.45).
+   */
+  checkFallenPins() {
+    const fallenPins = [];
+
+    this.pins.forEach(pin => {
+      const body = pin.body;
+      const up = new CANNON.Vec3(0, 1, 0);
+      const worldUp = body.quaternion.vmult(up);
+
+      const isTilted = worldUp.y < 0.72;
+      const isDown = body.position.y < (this.PIN_HEIGHT * 0.45);
+
+      if (isTilted || isDown) {
+        pin.fallen = true;
+        fallenPins.push(pin);
+      } else {
+        pin.fallen = false;
+      }
+    });
+
+    return fallenPins;
+  }
+
+  /**
+   * Règle officielle du Mölkky : Redressement des quilles sur place
+   * Principe du jeu et application en code :
+   * - Au Mölkky, les quilles tombées NE SONT PAS remises au centre !
+   * - Elles sont redressées EXACTEMENT à l'endroit où leur base s'est immobilisée (posX, posZ).
+   * - C'est ce qui fait la dynamique unique du jeu : au fil des lancers, les quilles
+   *   s'écartent et le jeu s'étend sur plusieurs mètres carrés, augmentant la difficulté !
+   */
+  standFallenPinsUpright() {
+    this.pins.forEach(pin => {
+      if (pin.fallen) {
+        // Coordonnées sécurisées contre les valeurs NaN
+        const posX = isFinite(pin.body.position.x) ? pin.body.position.x : pin.initialPos.x;
+        const posZ = isFinite(pin.body.position.z) ? pin.body.position.z : pin.initialPos.z;
+        const standingY = this.PIN_HEIGHT / 2 + 0.003;
+
+        // Réveil du corps, replacement vertical et remise en sommeil
+        pin.body.wakeUp();
+        pin.body.position.set(posX, standingY, posZ);
+
+        pin.body.quaternion.set(0, 0, 0, 1);
+        pin.body.velocity.set(0, 0, 0);
+        pin.body.angularVelocity.set(0, 0, 0);
+
+        pin.body.sleep();
+        pin.fallen = false;
+      } else {
+        pin.body.velocity.set(0, 0, 0);
+        pin.body.angularVelocity.set(0, 0, 0);
+        pin.body.sleep();
+      }
+    });
+
+    this.syncMeshes();
+  }
+
+  /**
+   * Vérifie si tous les corps physiques (bâton et quilles) se sont immobilisés
+   * Seuil de vitesse linéaire < 0.05 m/s et vitesse angulaire < 0.08 rad/s
+
 }
