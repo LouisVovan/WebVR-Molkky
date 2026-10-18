@@ -468,5 +468,215 @@ class VRControllerManager {
     return this.findClickableNearRay(origin, dir, 0.85, 0.3);
   }
 
+  getTargetFromGaze() {
+    const camera = document.getElementById('camera');
+    if (!camera?.object3D) return null;
+
+    camera.object3D.updateMatrixWorld(true);
+    const origin = new THREE.Vector3();
+    const dir = new THREE.Vector3(0, 0, -1);
+    camera.object3D.getWorldPosition(origin);
+    const quat = new THREE.Quaternion();
+    camera.object3D.getWorldQuaternion(quat);
+    dir.applyQuaternion(quat).normalize();
+
+    return this.findClickableNearRay(origin, dir, 0.95, 0.4);
+  }
+
+  getBannerOrTotemFallback() {
+    // Si la bannière de victoire ou défaite est affichée
+    const vic = document.getElementById('vr-victory-group');
+    const def = document.getElementById('vr-defeat-group');
+    if (vic && vic.getAttribute('visible') !== 'false') return document.getElementById('vr-vic-btn-replay');
+    if (def && def.getAttribute('visible') !== 'false') return document.getElementById('vr-def-btn-retry');
+
+    // Sur le totem : bouton le plus aligné avec la direction du regard
+    const camera = document.getElementById('camera');
+    if (!camera?.object3D) return null;
+    const camDir = new THREE.Vector3();
+    camera.object3D.getWorldDirection(camDir);
+
+    let bestEl = null;
+    let maxDot = 0.45;
+    for (const id of ['vr-btn-new', 'vr-btn-diff', 'vr-btn-grab', 'vr-btn-joy']) {
+      const el = document.getElementById(id);
+      if (!el?.object3D) continue;
+      const pos = new THREE.Vector3();
+      el.object3D.getWorldPosition(pos);
+      const toBtn = pos.sub(camera.object3D.position).normalize();
+      const dot = camDir.dot(toBtn);
+      if (dot > maxDot) {
+        maxDot = dot;
+        bestEl = el;
+      }
+    }
+    return bestEl;
+  }
+
+  /**
+   * Déclenché lors de l'appui sur le Bouton A ou X
+   * Résout le bouton visé et exécute le clic
+   */
+  onFaceButtonPressed(hand) {
+    const otherHand = hand === 'left' ? 'right' : 'left';
+
+    const target =
+      this.hoveredEls[hand] ||
+      this.hoveredEls[otherHand] ||
+      this.getIntersectedClickable(hand) ||
+      this.getIntersectedClickable(otherHand) ||
+      this.getTargetFromHand(hand) ||
+      this.getTargetFromHand(otherHand) ||
+      this.getTargetFromGaze() ||
+      this.getBannerOrTotemFallback();
+
+    if (target) {
+      this.handleElementClick(target, hand);
+    }
+  }
+
+  /**
+   * Exécute l'action associée à un bouton 3D cliqué
+   */
+  handleElementClick(rawEl, hand) {
+    if (!rawEl) return;
+    const now = performance.now();
+    if (now - this.lastActionTimestamp < 220) return;
+    this.lastActionTimestamp = now;
+
+    // Résolution de l'élément cliquable parent si on a touché du texte 3D
+    const el = rawEl.classList?.contains('clickable')
+      ? rawEl
+      : (rawEl.closest?.('.clickable') || rawEl) || rawEl;
+    const id = (el.id || rawEl.id || '').toLowerCase();
+
+    // Retour haptique et sonore
+    this.triggerHaptic(hand, 0.75, 80);
+    if (window.soundEngine) {
+      const pos = el.object3D ? el.object3D.position : { x: 2.0, y: 1.2, z: -1.6 };
+      window.soundEngine.playWhoosh(pos, 0.45);
+    }
+
+    // Animation visuelle de clic (enfoncement et rebond)
+    el.setAttribute('scale', '0.90 0.90 0.90');
+    setTimeout(() => {
+      el.setAttribute('scale', this.hoveredEls[hand] === el ? '1.08 1.08 1.08' : '1 1 1');
+    }, 120);
+
+    // Déclenchement de l'action selon l'ID du bouton
+    if (id.includes('new') || id.includes('recommencer') || id.includes('restart')) {
+      if (window.molkkyGame) window.molkkyGame.startNewGame();
+    } else if (id.includes('diff') || id.includes('niveau')) {
+      if (window.molkkyGame) {
+        const levels = ['facile', 'normal', 'difficile'];
+        const next = levels[(levels.indexOf(window.molkkyGame.difficulty) + 1) % levels.length];
+        window.molkkyGame.startNewGame(next);
+      }
+    } else if (id.includes('grab') || id.includes('baton') || id.includes('rappeler')) {
+      this.grabWithHand(hand || 'right', 'trigger');
+    } else if (id.includes('joy')) {
+      this.toggleLocomotionInvert();
+    } else if (id.includes('replay') || id.includes('rejouer') || id.includes('retry') || id.includes('reessayer')) {
+      if (window.molkkyGame) {
+        window.molkkyGame.closeGameOverModal();
+        window.molkkyGame.startNewGame();
+      }
+      if (window.vrCelebration) window.vrCelebration.dismiss();
+    } else if (id.includes('next')) {
+      if (window.molkkyGame) {
+        const levels = ['facile', 'normal', 'difficile'];
+        const next = levels[Math.min(levels.indexOf(window.molkkyGame.difficulty) + 1, levels.length - 1)];
+        window.molkkyGame.startNewGame(next);
+      }
+      if (window.vrCelebration) window.vrCelebration.dismiss();
+    } else if (id.includes('easier')) {
+      if (window.molkkyGame) window.molkkyGame.startNewGame('facile');
+      if (window.vrCelebration) window.vrCelebration.dismiss();
+    }
+
+    // Exécution de la fonction directe attachée si présente
+    if (typeof el.onButtonClick === 'function') el.onButtonClick();
+    else if (typeof rawEl.onButtonClick === 'function') rawEl.onButtonClick();
+
+    // Émission des événements DOM et A-Frame
+    el.emit('click', { hand, fromVR: true, fromButtonA: true });
+    el.dispatchEvent(new CustomEvent('click', { detail: { hand, fromVR: true, fromButtonA: true }, bubbles: true }));
+  }
+
+  triggerHaptic(hand, intensity = 0.5, duration = 60) {
+    const el = hand === 'left' ? this.leftHandEl : this.rightHandEl;
+    if (!el) return;
+    try {
+      const controller = el.components['meta-touch-controls'] || el.components['oculus-touch-controls'] || el.components['tracked-controls'];
+      const gp = controller?.controller?.gamepad;
+      if (gp?.hapticActuators?.[0]) {
+        gp.hapticActuators[0].pulse(intensity, duration);
+      }
+    } catch (e) {}
+  }
+
+  updateRayInteractions() {
+    for (const hand of ['left', 'right']) {
+      const closestEl = this.getIntersectedClickable(hand);
+      const prevHovered = this.hoveredEls[hand];
+
+      if (closestEl !== prevHovered) {
+        if (prevHovered) {
+          if (prevHovered._origColor) prevHovered.setAttribute('color', prevHovered._origColor);
+          prevHovered.setAttribute('scale', '1 1 1');
+          prevHovered.emit('mouseleave', { hand, fromVR: true });
+        }
+        if (closestEl) {
+          if (!closestEl._origColor) closestEl._origColor = closestEl.getAttribute('color') || '#ffffff';
+          let hoverColor = '#fbbf24';
+          if (closestEl.id === 'vr-btn-diff' || closestEl.id.includes('next')) hoverColor = '#60a5fa';
+          else if (closestEl.id === 'vr-btn-grab') hoverColor = '#34d399';
+          else if (closestEl.id === 'vr-btn-joy') hoverColor = '#c084fc';
+
+          closestEl.setAttribute('color', hoverColor);
+          closestEl.setAttribute('scale', '1.08 1.08 1.08');
+          this.triggerHaptic(hand, 0.25, 25);
+          closestEl.emit('mouseenter', { hand, fromVR: true });
+        }
+        this.hoveredEls[hand] = closestEl;
+      }
+    }
+  }
+
+  toggleLocomotionInvert() {
+    this.invertLocomotion = !this.invertLocomotion;
+    try {
+      localStorage.setItem('molkky_invert_locomotion', this.invertLocomotion ? '1' : '0');
+    } catch (e) {}
+
+    const label = this.invertLocomotion ? 'Inversé' : 'Normal';
+    if (window.molkkyGame) window.molkkyGame.showFeedback(`Joystick Déplacement : ${label}`, 'info');
+    const btnTxt = document.getElementById('vr-btn-joy-text');
+    if (btnTxt) btnTxt.setAttribute('value', `Joystick : ${label}`);
+  }
+
+  /* =========================================================================
+   * 4. BOUCLE PRINCIPALE DE MISE À JOUR (CHAQUE FRAME)
+   * ========================================================================= */
+
+  update(time, deltaTime) {
+    try {
+      this.updateRayInteractions();
+      this.updateWebXRGamepads(deltaTime);
+
+      if (!this.heldByHand) {
+        this.hideTrajectory();
+        return;
+      }
+
+      // Enregistre les positions pour la vélocité de lancer
+      const handEl = this.heldByHand === 'left' ? this.leftHandEl : this.rightHandEl;
+      if (!handEl) return;
+
+      const handPos = new THREE.Vector3();
+      handEl.object3D.getWorldPosition(handPos);
+      if (!isFinite(handPos.x)) return;
+
+      const now = performance.now();
 
 }
