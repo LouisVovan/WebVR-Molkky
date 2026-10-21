@@ -418,5 +418,84 @@ class MolkkyPhysics {
   /**
    * Vérifie si tous les corps physiques (bâton et quilles) se sont immobilisés
    * Seuil de vitesse linéaire < 0.05 m/s et vitesse angulaire < 0.08 rad/s
+   */
+  checkIfSettled() {
+    const minSpeed = 0.05;
+    const minRot = 0.08;
 
+    if (this.batonBody && this.batonBody.type === CANNON.Body.DYNAMIC) {
+      if (this.batonBody.velocity.length() > minSpeed || this.batonBody.angularVelocity.length() > minRot) {
+        return false;
+      }
+    }
+
+    for (let i = 0; i < this.pins.length; i++) {
+      const b = this.pins[i].body;
+      const isSleeping = typeof b.isSleeping === 'function' ? b.isSleeping() : (b.sleepState === 2);
+      if (!isSleeping) {
+        if (b.velocity.length() > minSpeed || b.angularVelocity.length() > minRot) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Synchronise les coordonnées mathématiques de Cannon.js vers les meshes visuels Three.js
+   * (Zéro latence : le mesh copie position et quaternion du body à chaque frame)
+   */
+  syncMeshes() {
+    try {
+      if (this.batonMesh && this.batonBody && isFinite(this.batonBody.position.x)) {
+        if (!window.vrControllerManager || !window.vrControllerManager.heldByHand) {
+          this.batonMesh.position.copy(this.batonBody.position);
+          this.batonMesh.quaternion.copy(this.batonBody.quaternion);
+        }
+      }
+
+      for (let i = 0; i < this.pins.length; i++) {
+        const pin = this.pins[i];
+        if (pin.mesh && pin.body && isFinite(pin.body.position.x)) {
+          pin.mesh.position.copy(pin.body.position);
+          pin.mesh.quaternion.copy(pin.body.quaternion);
+        }
+      }
+    } catch (e) {}
+  }
+
+  /**
+   * Avance la simulation physique d'un pas de temps deltaTime
+   * Comprend un double verrouillage de fin de lancer :
+   * 1. Détection de repos physique (quand tout s'est arrêté après 1.5s minimum)
+   * 2. Sécurité de timeout absolu (5.5s maximum au cas où une quille roule indéfiniment)
+   */
+  step(deltaTime) {
+    if (!this.world) return;
+
+    try {
+      const dt = Math.min(Math.max(deltaTime, 0.001), 0.05);
+      this.world.step(1 / 60, dt, 3);
+      this.syncMeshes();
+
+      if (this.isSettling) {
+        this.settleTimer += dt;
+        const settled = (this.settleTimer > 1.5 && this.checkIfSettled()) || (this.settleTimer > 5.5);
+
+        if (settled) {
+          this.isSettling = false;
+          this.roundInProgress = false;
+          if (this.settleCallback) {
+            const fallen = this.checkFallenPins();
+            this.settleCallback(fallen);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Physics loop error caught:', err);
+    }
+  }
 }
+
+window.molkkyPhysics = new MolkkyPhysics();
