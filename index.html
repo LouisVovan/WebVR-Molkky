@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebVR Mölkky - Jeu Immersif WebXR</title>
+  <meta name="description"
+    content="Jeu de Mölkky en réalité virtuelle WebVR / WebXR développé avec A-Frame et Cannon.js pour ST2AWD.">
+
+  <!-- =====================================================================
+       ARCHITECTURE DU PROJET (MODULE 1 & VUE D'ENSEMBLE) :
+       Cette application WebXR repose sur 4 piliers modulaires :
+       1. Framework 3D & WebXR : A-Frame (1.5.0, basé sur Three.js)
+       2. Moteur Physique : Cannon.js (0.6.2, calcul des corps rigides en 60 FPS)
+       3. Logique & Règles : Architecture Vanilla JS modulaire (zéro dépendance lourde)
+       4. Audio & Textures Procédurales : Web Audio API & HTML5 Canvas (aucun asset externe lourd)
+       ===================================================================== -->
+
+  <!-- 1. Moteur WebXR & 3D déclaratif (A-Frame 1.5.0) -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+  <!-- 2. Moteur physique 3D pour la gravité, les chocs et les frictions (Cannon.js) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+
+  <!-- Feuilles de style : Glassmorphism, typographie moderne et HUD interactif -->
+  <link rel="stylesheet" href="css/style.css?v=20261022_v3">
+
+  <!-- =====================================================================
+       MODULES APPLICATIFS (RÉPARTITION DU PROJET EN 4 PACKAGES INDÉPENDANTS) :
+       - textures.js & scene.js : Module 1 (Graphismes, Objets 3D, Décor)
+       - physics.js            : Module 2 (Moteur physique, Détection des chutes)
+       - game.js & celebration : Module 3 (Règles officielles Mölkky, Victoire/Défaite)
+       - controls.js & audio.js: Module 4 (Manettes Meta Quest 3, Sons 3D)
+       ===================================================================== -->
+  <script src="js/textures.js?v=20261022_v3"></script>
+  <script src="js/audio.js?v=20261022_v3"></script>
+  <script src="js/physics.js?v=20261022_v3"></script>
+  <script src="js/game.js?v=20261022_v3"></script>
+  <script src="js/controls.js?v=20261022_v3"></script>
+  <script src="js/celebration.js?v=20261022_v3"></script>
+  <script src="js/scene.js?v=20261022_v3"></script>
+</head>
+
+<body>
+  <!-- =====================================================================
+       INTERFACE 2D / COMPANION HUD (POUR ÉCRAN PC & SPECTATEUR)
+       Rôle du HUD 2D :
+       - Permet à un observateur de suivre la partie sur écran 2D pendant qu'un utilisateur joue en VR
+       - Fournit un mode de prévisualisation desktop complet (clics souris, lancer simulé)
+       - S'estompe automatiquement lors du passage en réalité virtuelle au profit du Totem 3D
+       ===================================================================== -->
+  <div id="hud-container">
+    <!-- Top Bar -->
+    <header class="hud-top-bar hud-interactive">
+      <div class="hud-brand">
+        <h1>MÖLKKY VR</h1>
+        <span class="badge">WebXR ST2AWD</span>
+      </div>
+
+      <!-- Main Score Cluster -->
+      <div class="score-cluster">
+        <div class="score-main">
+          <div class="label">Score</div>
+          <div id="hud-score" class="value">0 / 50</div>
+        </div>
+
+        <div class="score-divider"></div>
+
+        <div class="score-stat">
+          <div class="label">Dernier lancer</div>
+          <div id="hud-last-points" class="value">+0</div>
+        </div>
+
+        <div class="score-divider"></div>
+
+        <div class="score-stat">
+          <div class="label">Lancers</div>
+          <div id="hud-throws" class="value">#0</div>
+        </div>
+
+        <div class="score-divider"></div>
+
+        <div class="score-stat">
+          <div class="label">Échecs</div>
+          <div id="hud-misses" class="value">0 / 3</div>
+        </div>
+      </div>
+
+      <!-- Timer, Difficulty & Enter VR Button -->
+      <div class="hud-meta">
+        <div class="timer-card">
+          <span>⏱</span>
+          <span id="hud-timer">00:00</span>
+        </div>
+        <button id="btn-diff-cycle" class="btn-glass" onclick="toggleDifficulty()">
+          <span>Niveau:</span>
+          <strong id="hud-difficulty" style="color: var(--accent-blue);">Normal</strong>
+        </button>
+        <button id="btn-joy-toggle" class="btn-glass" onclick="toggleJoystickInvert()">
+          <span>Joystick:</span>
+          <strong id="hud-joy-mode" style="color: #a855f7;">Normal</strong>
+        </button>
+        <button class="btn-glass btn-vr" onclick="enterVRMode()">
+          🥽 Entrer en VR
+        </button>
+      </div>
+    </header>
+
+    <!-- Feedback Banner -->
+    <div id="feedback-banner" class="feedback-banner">
+      Bienvenue dans le Mölkky VR !
+    </div>
+
+    <!-- Bottom Bar -->
+    <footer class="hud-bottom-bar hud-interactive">
+      <!-- Actions -->
+      <div class="hud-actions">
+        <button class="btn-glass btn-primary" onclick="window.molkkyGame.startNewGame()">
+          <span>🔄</span> Nouvelle Partie
+        </button>
+        <button class="btn-glass" onclick="window.molkkyGame.restartGame()">
+          Recommencer
+        </button>
+        <button class="btn-glass" onclick="window.vrControllerManager.executeSimulatedThrow(1.0, 0.0)">
+          <span>🎯</span> Lancer de test
+        </button>
+      </div>
+
+      <!-- VR Controls Notice -->
+      <div class="vr-tip">
+        <span>🥽 <strong>Meta Quest 3 :</strong> Joystick gauche = Déplacement | Joystick droit = Pivoter |
+          Gâchettes (4) = Attraper & Lancer bâton | Bouton A = Cliquer boutons</span>
+      </div>
+
+      <!-- History Panel -->
+      <div class="history-panel">
+        <div class="history-header">Historique des lancers</div>
+        <ul id="history-list" class="history-list">
+          <li class="empty-history">Aucun lancer pour l'instant</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Game Over Modal (Victory / Defeat) -->
+  <div id="gameover-modal" class="modal-overlay">
+    <div class="modal-box">
+      <h2 id="gameover-title" class="modal-title">🏆 VICTOIRE !</h2>
+      <p id="gameover-desc" class="modal-desc">Félicitations, vous avez atteint exactement 50 points !</p>
+      <div id="gameover-stats" class="stats-grid">
+        <!-- Injected via JavaScript -->
+      </div>
+      <div class="modal-actions">
+        <button class="btn-glass btn-primary"
+          onclick="window.molkkyGame.closeGameOverModal(); window.molkkyGame.startNewGame();">
+          Rejouer
+        </button>
+        <button class="btn-glass" onclick="window.molkkyGame.closeGameOverModal()">
+          Fermer
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       SCÈNE 3D WEBXR A-FRAME (MODULE 1 & MODULE 4)
+       Choix d'architecture et points clés :
+       - referenceSpaceType: 'local-floor' : Calibre le plancher physique à Y = 0m.
+         La taille du joueur dans la pièce réelle est fidèlement reflétée (caméra à ~1.65m).
+       - colorManagement & physicallyCorrectLights : Garantit un rendu PBR (Physically
+         Based Rendering) avec Three.js, crucial pour la texture du bois et du gazon.
+       ===================================================================== -->
+  <a-scene webxr="referenceSpaceType: local-floor; optionalFeatures: local-floor, hand-tracking;"
+    renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true;" background="color: #87ceeb">
+
+    <!-- Ciel d'été ensoleillé -->
+    <a-sky color="#7ec0ee"></a-sky>
+
+    <!-- Éclairage : Lumière ambiante douce + Soleil directionnel avec ombres -->
+    <a-entity light="type: ambient; color: #ffffff; intensity: 0.65;"></a-entity>
+    <a-entity light="type: directional; color: #fff9e6; intensity: 1.2; castShadow: true;" position="5 10 4">
+    </a-entity>
+
+    <!-- Terrain en pelouse (60m x 60m), texturé dynamiquement par Canvas dans scene.js -->
+    <a-plane id="ground-plane" position="0 0 0" rotation="-90 0 0" width="60" height="60"
+      material="color: #4f7d32; roughness: 0.88;">
+    </a-plane>
+
+    <!-- =====================================================================
+         RIG DU JOUEUR (CAMÉRA 6DoF + MANETTES META QUEST 3)
+         Principe ergonomique et suivi 6DoF :
+         Pour permettre le déplacement au joystick sans écraser le suivi positionnel
+         réel du casque (6DoF), la caméra et les deux manettes sont groupées dans
+         l'entité parent '#rig'. C'est '#rig.position' qui est translaté par le joystick.
+         ===================================================================== -->
+    <a-entity id="rig" position="0 0 0">
+      <!-- Tête / Vue du joueur (Hauteur standard 1.65m en mode desktop, automatique en VR) -->
+      <a-camera id="camera" position="0 1.65 0" look-controls="pointerLockEnabled: false">
+        <!-- Réticule souris pour tester les clics sur les boutons 3D sans casque VR (Desktop Fallback) -->
+        <a-cursor id="mouse-cursor" raycaster="objects: .clickable; far: 15"
+          material="color: #fbbf24; shader: flat; opacity: 0.7;"
+          geometry="primitive: ring; radiusInner: 0.007; radiusOuter: 0.012">
+        </a-cursor>
+      </a-camera>
+
+      <!-- Manette Gauche : Oculus Touch / Meta Touch (Déplacement + Faisceau UI Bleu) -->
+      <a-entity id="left-controller"
+        oculus-touch-controls="hand: left; model: true"
+        meta-touch-controls="hand: left; model: true"
+        cursor="rayOrigin: entity; downEvents: xbuttondown, ybuttondown; upEvents: xbuttonup, ybuttonup"
+        raycaster="objects: .clickable; far: 12; direction: 0 -0.5736 -0.8192">
+        <!-- Faisceau laser incliné à 35° vers le bas (aligné ergonomiquement avec le nez de la manette) -->
+        <a-entity id="left-ray"
+          position="0 -0.01 0.05"
+          rotation="-35 0 0"
+          raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #38bdf8"
+          line="color: #38bdf8; opacity: 0.6">
+        </a-entity>
+      </a-entity>
+
+      <!-- Manette Droite : Oculus Touch / Meta Touch (Rotation + Lancer + Faisceau UI Jaune) -->
+      <a-entity id="right-controller"
+        oculus-touch-controls="hand: right; model: true"
+        meta-touch-controls="hand: right; model: true"
+        cursor="rayOrigin: entity; downEvents: abuttondown, bbuttondown; upEvents: abuttonup, bbuttonup"
+        raycaster="objects: .clickable; far: 12; direction: 0 -0.5736 -0.8192">
+        <!-- Faisceau laser incliné à 35° vers le bas -->
+        <a-entity id="right-ray"
+          position="0 -0.01 0.05"
+          rotation="-35 0 0"
+          raycaster="objects: .clickable; far: 12; showLine: true; lineColor: #fbbf24"
+          line="color: #fbbf24; opacity: 0.6">
+        </a-entity>
+      </a-entity>
+    </a-entity>
+
+    <!-- Composant central A-Frame 'molkky-manager' qui orchestre le terrain, les quilles et la boucle de jeu -->
+    <a-entity molkky-manager></a-entity>
+  </a-scene>
+
+  <script>
+    function toggleDifficulty() {
+      if (!window.molkkyGame) return;
+      const levels = ['facile', 'normal', 'difficile'];
+      const currentIdx = levels.indexOf(window.molkkyGame.difficulty);
+      const nextLevel = levels[(currentIdx + 1) % levels.length];
+      window.molkkyGame.startNewGame(nextLevel);
+    }
+
+    function toggleJoystickInvert() {
+      if (window.vrControllerManager) {
+        window.vrControllerManager.toggleLocomotionInvert();
+        const hudJoy = document.getElementById('hud-joy-mode');
+        if (hudJoy) {
+          hudJoy.textContent = window.vrControllerManager.invertLocomotion ? 'Inversé' : 'Normal';
+        }
+      }
+    }
+
+    function enterVRMode() {
+      const sceneEl = document.querySelector('a-scene');
+      if (sceneEl) {
+        if (window.soundEngine) window.soundEngine.ensureContext();
+        sceneEl.enterVR();
+      }
+    }
+
+    // Adapt UI when entering/exiting VR on Meta Quest
+    window.addEventListener('DOMContentLoaded', () => {
+      const sceneEl = document.querySelector('a-scene');
+      if (!sceneEl) return;
+
+      sceneEl.addEventListener('enter-vr', () => {
+        const hud = document.getElementById('hud-container');
+        if (hud) hud.classList.add('in-vr');
+        const cursor = document.getElementById('mouse-cursor');
+        if (cursor) cursor.setAttribute('visible', 'false');
+        if (window.soundEngine) window.soundEngine.ensureContext();
+      });
+
+      sceneEl.addEventListener('exit-vr', () => {
+        const hud = document.getElementById('hud-container');
+        if (hud) hud.classList.remove('in-vr');
+        const cursor = document.getElementById('mouse-cursor');
+        if (cursor) cursor.setAttribute('visible', 'true');
+      });
+    });
+  </script>
+</body>
+
+</html>
