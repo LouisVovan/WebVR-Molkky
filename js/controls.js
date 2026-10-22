@@ -678,5 +678,224 @@ class VRControllerManager {
       if (!isFinite(handPos.x)) return;
 
       const now = performance.now();
+      const dt = Math.max((now - this.lastTimestamp) / 1000, 0.001);
 
+      if (dt > 0.003) {
+        const vel = new THREE.Vector3().subVectors(handPos, this.lastHandPos).divideScalar(dt);
+        if (isFinite(vel.x)) {
+          this.velocityHistory.push({ vel, time: now });
+          if (this.velocityHistory.length > 25) this.velocityHistory.shift();
+        }
+        this.lastHandPos.copy(handPos);
+        this.lastTimestamp = now;
+      }
+
+      // Guide de trajectoire visuelle en mode Facile
+      if (window.molkkyGame?.difficulty === 'facile') {
+        this.renderTrajectoryArc(handPos, this.calculateReleaseVelocity());
+      } else {
+        this.hideTrajectory();
+      }
+    } catch (e) {
+      console.warn('VR update error:', e);
+    }
+  }
+
+  /**
+   * Lecture directe de l'API WebXR Gamepad pour Meta Quest 3 :
+   * - Déplacement caméra (stick gauche)
+   * - Rotation caméra (stick droit)
+   * - Clic boutons A/X (boutons de face b >= 2)
+   * - Prise / Lancer du bâton (gâchettes index & grip)
+   */
+  updateWebXRGamepads(deltaTime) {
+    const scene = document.querySelector('a-scene');
+    if (!scene?.xrSession) return;
+
+    const rig = document.getElementById('rig');
+    const camera = document.getElementById('camera');
+    if (!rig || !camera) return;
+
+    for (const source of scene.xrSession.inputSources) {
+      if (!source.gamepad) continue;
+      const gp = source.gamepad;
+      const hand = source.handedness;
+
+      const axisX = gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0);
+      const axisY = gp.axes.length >= 4 ? gp.axes[3] : (gp.axes[1] || 0);
+
+      const triggerVal = gp.buttons[0] ? (gp.buttons[0].value || (gp.buttons[0].pressed ? 1 : 0)) : 0;
+      const gripVal = gp.buttons[1] ? (gp.buttons[1].value || (gp.buttons[1].pressed ? 1 : 0)) : 0;
+
+      // 1. JOYSTICK GAUCHE : Déplacement fluide aligné sur la caméra
+      if (hand === 'left' && (Math.abs(axisX) > 0.12 || Math.abs(axisY) > 0.12)) {
+        const forward = new THREE.Vector3();
+        camera.object3D.getWorldDirection(forward);
+        forward.y = 0;
+        forward.normalize();
+
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+        const sign = this.invertLocomotion ? -1 : 1;
+
+        const moveDir = new THREE.Vector3()
+          .addScaledVector(forward, axisY * sign)
+          .addScaledVector(right, -axisX * sign);
+        if (moveDir.lengthSq() > 0.001) moveDir.normalize();
+
+        const moveSpeed = 2.4 * Math.min(Math.hypot(axisX, axisY), 1.0) * (deltaTime / 1000);
+        rig.object3D.position.addScaledVector(moveDir, moveSpeed);
+
+        // Limites de jeu autour du terrain
+        rig.object3D.position.x = Math.max(Math.min(rig.object3D.position.x, 8), -8);
+        rig.object3D.position.z = Math.max(Math.min(rig.object3D.position.z, 2), -6);
+      }
+
+      // 2. JOYSTICK DROIT : Rotation fluide de la vue
+      if (hand === 'right' && Math.abs(axisX) > 0.12) {
+        rig.object3D.rotation.y -= axisX * 2.3 * (deltaTime / 1000);
+      }
+
+      // 3. BOUTONS DE FACE (A / X / B / Y) : Clic UI
+      let facePressed = false;
+      for (let b = 2; b < gp.buttons.length; b++) {
+        if (gp.buttons[b] && (gp.buttons[b].pressed || gp.buttons[b].value > 0.5)) {
+          facePressed = true;
+          break;
+        }
+      }
+
+      if (facePressed && !this.prevFaceButton[hand]) {
+        this.onFaceButtonPressed(hand);
+      }
+      this.prevFaceButton[hand] = facePressed;
+
+      // 4. LES 4 GÂCHETTES (Index + Grip) : Attraper et lancer le bâton
+      const isPulling = triggerVal > 0.40 || gripVal > 0.40;
+      const isReleased = triggerVal < 0.18 && gripVal < 0.18;
+
+      if (!this.heldByHand) {
+        if (isPulling && !this.isSqueezing[hand]) {
+          this.isSqueezing[hand] = true;
+          this.checkAndGrab(hand, triggerVal > 0.40 ? 'trigger' : 'grip');
+        }
+      } else if (this.heldByHand === hand) {
+        if (isReleased && (performance.now() - this.grabTimestamp) >= 200) {
+          this.isSqueezing[hand] = false;
+          this.onRelease(hand);
+        }
+      }
+
+      if (isReleased) {
+        this.isSqueezing[hand] = false;
+      }
+    }
+  }
+
+  /* =========================================================================
+   * 5. ARC DE TRAJECTOIRE EN MODE FACILE & FALLBACK BUREAU (DESKTOP)
+   * ========================================================================= */
+
+  renderTrajectoryArc(startPos, velocity) {
+    const scene = document.querySelector('a-scene');
+    if (!scene?.object3D || !isFinite(velocity.x) || !isFinite(startPos.x)) return;
+
+    if (!this.trajectoryLine) {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(30 * 3), 3));
+      this.trajectoryLine = new THREE.Line(geom, new THREE.LineBasicMaterial({
+        color: 0xfacc15,
+        linewidth: 3,
+        transparent: true,
+        opacity: 0.85
+      }));
+      this.trajectoryLine.frustumCulled = false;
+      scene.object3D.add(this.trajectoryLine);
+    }
+
+    const pos = this.trajectoryLine.geometry.attributes.position.array;
+    const gravity = new THREE.Vector3(0, -9.81, 0);
+    const dt = 0.035;
+    const p = startPos.clone();
+    const v = velocity.clone();
+
+    for (let i = 0; i < 30; i++) {
+      pos[i * 3]     = p.x;
+      pos[i * 3 + 1] = p.y;
+      pos[i * 3 + 2] = p.z;
+      p.addScaledVector(v, dt);
+      v.addScaledVector(gravity, dt);
+
+      if (p.y < 0.01) {
+        for (let j = i + 1; j < 30; j++) {
+          pos[j * 3]     = p.x;
+          pos[j * 3 + 1] = 0.01;
+          pos[j * 3 + 2] = p.z;
+        }
+        break;
+      }
+    }
+    this.trajectoryLine.geometry.attributes.position.needsUpdate = true;
+    this.trajectoryLine.visible = true;
+  }
+
+  hideTrajectory() {
+    if (this.trajectoryLine) this.trajectoryLine.visible = false;
+  }
+
+  setupDesktopFallback() {
+    let isAiming = false;
+    let startX = 0, startY = 0;
+
+    window.addEventListener('mousedown', (e) => {
+      if (e.target.closest?.('#hud-container') || e.target.closest?.('.modal-overlay') || e.target.closest?.('#vr-totem') || e.target.closest?.('.clickable')) return;
+      if (!window.molkkyGame || window.molkkyGame.state !== 'READY') return;
+
+      isAiming = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      window.molkkyGame.state = 'AIMING';
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (!isAiming || !window.molkkyGame || window.molkkyGame.state !== 'AIMING') return;
+      isAiming = false;
+
+      const power = Math.max(Math.min((startY - e.clientY) * 0.045, 12), 3.5);
+      const angle = Math.max(Math.min((e.clientX - startX) * 0.003, 1.2), -1.2);
+      const targetZ = window.molkkyGame.difficultyConfigs[window.molkkyGame.difficulty].distance;
+      const dist = Math.abs(targetZ);
+
+      const linVel = new THREE.Vector3(
+        angle * 2.2,
+        Math.max(power * 0.45, 1.6),
+        -Math.max(dist * 1.45 + (power - 5) * 0.4, 3.8)
+      );
+      const angVel = new THREE.Vector3((Math.random() - 0.5) * 2, -5, (Math.random() - 0.5) * 2);
+      const launchPos = new THREE.Vector3(0, 1.1, -0.3);
+
+      if (window.molkkyPhysics) window.molkkyPhysics.launchBaton(launchPos, linVel, angVel);
+      if (window.soundEngine) window.soundEngine.playThrow(launchPos, linVel.length());
+      window.molkkyGame.onThrowLaunched();
+    });
+  }
+
+  executeSimulatedThrow(powerModifier = 1.0, horizontalAim = 0.0) {
+    if (!window.molkkyGame || window.molkkyGame.state !== 'READY') return;
+    const targetZ = window.molkkyGame.difficultyConfigs[window.molkkyGame.difficulty].distance;
+    const dist = Math.abs(targetZ);
+
+    const linVel = new THREE.Vector3(
+      horizontalAim * 0.8 + (Math.random() - 0.5) * 0.15,
+      1.75 * Math.sqrt(powerModifier),
+      -(dist * 1.55 * powerModifier)
+    );
+    const angVel = new THREE.Vector3(-4, -2, 1);
+    const launchPos = new THREE.Vector3(0, 1.05, -0.3);
+
+    if (window.molkkyPhysics) window.molkkyPhysics.launchBaton(launchPos, linVel, angVel);
+    if (window.soundEngine) window.soundEngine.playThrow(launchPos, linVel.length());
+    window.molkkyGame.onThrowLaunched();
+  }
 }
+
+window.vrControllerManager = new VRControllerManager();
